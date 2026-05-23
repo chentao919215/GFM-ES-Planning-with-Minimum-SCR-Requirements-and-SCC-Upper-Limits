@@ -53,9 +53,10 @@ params.SCR_min = 3;
 
 %% 6. 求解器与数值参数
 params.Num_Calculation = 1;
-params.M_BIG_L = 1e4;
-params.M_BIG_Z = 1e4;
 params.KZ = 1e3;
+
+% ZBoundMargin 是由两个极端工况估计 Z 元素上下界时保留的安全裕度。
+params.ZBoundMargin = 0.05;
 
 % ERR_TOL_FACTOR 会在加载时乘以 KZ，得到阻抗矩阵约束的绝对容差。
 params.ERR_TOL_FACTOR = 1e-6;

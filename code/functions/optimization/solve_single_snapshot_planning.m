@@ -1,5 +1,5 @@
 function [SCC_0,SCC_1,value_P_Line,value_theta,value_P_G,value_P_GFL,value_P_GFM,...
-    SCR,Z_val,value_u_GFL,value_u_GFM,value_u_G,value_Cost_CON,value_Cost_GEN,value_Cost_Total] = solve_single_snapshot_planning(mpc,CONF)
+    SCR,Z_val,value_u_GFL,value_u_GFM,value_u_G,value_Cost_CON,value_Cost_GEN,value_Cost_Total,Diagnostics] = solve_single_snapshot_planning(mpc,CONF)
 %SOLVE_SINGLE_SNAPSHOT_PLANNING 单时刻 GFM-ES 配置优化模型。
 %
 % 输入：
@@ -78,6 +78,16 @@ B_gfm = NET.B_gfm;
 DeltaY = NET.DeltaY;
 DeltaY_abs = NET.DeltaY_abs;
 
+Z_bounds = calculate_impedance_bounds(NET, CONF);
+M_Z = max([Z_bounds.real_M(:); Z_bounds.imag_M(:)]);
+if ~isfinite(M_Z) || M_Z <= 0
+    error('Global impedance Big-M must be a positive finite scalar.');
+end
+
+GFM_Candidate_Idx = find(Mask_GFM);
+N_GFM_Candidates = numel(GFM_Candidate_Idx);
+GFM_Row_Map = sparse(GFM_Candidate_Idx, (1:N_GFM_Candidates)', 1, N, N_GFM_Candidates);
+
 %% 3. 定义优化变量
 % 二进制变量统一采用常规语义：1 表示投运或投建，0 表示停机或不投建。
 u_SG  = binvar(G,1,'full');
@@ -95,8 +105,8 @@ Z_imag = sdpvar(N,N,'symmetric');
 % 以下辅助变量用于 Big-M 线性化二进制变量与阻抗矩阵元素的乘积。
 W_SGZ_X = sdpvar(G,N,'full');
 W_SGZ_R = sdpvar(G,N,'full');
-W_GFMZ_X = sdpvar(N,N,'full');
-W_GFMZ_R = sdpvar(N,N,'full');
+W_GFMZ_X = sdpvar(N_GFM_Candidates,N,'full');
+W_GFMZ_R = sdpvar(N_GFM_Candidates,N,'full');
 W_GFM = sdpvar(N,1,'full');
 
 %% 4. 建立约束
@@ -135,38 +145,44 @@ Z_SG_imag = Gen_Loc_Mat'*Z_imag;
 U_SG_Off_Mat = repmat(1-u_SG, 1, N);
 
 % 同步机导纳以“全在线”为基准，W_SGZ_* 表示停机机组需要扣除的项。
-C2 = [C2, W_SGZ_X(:) - Z_SG_imag(:) >= -CONF.M_BIG_Z*(1-U_SG_Off_Mat(:))];
-C2 = [C2, W_SGZ_X(:) - Z_SG_imag(:) <=  CONF.M_BIG_Z*(1-U_SG_Off_Mat(:))];
-C2 = [C2, W_SGZ_X(:)                 >= -CONF.M_BIG_Z*U_SG_Off_Mat(:)];
-C2 = [C2, W_SGZ_X(:)                 <=  CONF.M_BIG_Z*U_SG_Off_Mat(:)];
+C2 = [C2, W_SGZ_X(:) - Z_SG_imag(:) >= -M_Z*(1-U_SG_Off_Mat(:))];
+C2 = [C2, W_SGZ_X(:) - Z_SG_imag(:) <=  M_Z*(1-U_SG_Off_Mat(:))];
+C2 = [C2, W_SGZ_X(:)                >= -M_Z*U_SG_Off_Mat(:)];
+C2 = [C2, W_SGZ_X(:)                <=  M_Z*U_SG_Off_Mat(:)];
 
-C2 = [C2, W_SGZ_R(:) - Z_SG_real(:) >= -CONF.M_BIG_Z*(1-U_SG_Off_Mat(:))];
-C2 = [C2, W_SGZ_R(:) - Z_SG_real(:) <=  CONF.M_BIG_Z*(1-U_SG_Off_Mat(:))];
-C2 = [C2, W_SGZ_R(:)                >= -CONF.M_BIG_Z*U_SG_Off_Mat(:)];
-C2 = [C2, W_SGZ_R(:)                <=  CONF.M_BIG_Z*U_SG_Off_Mat(:)];
+C2 = [C2, W_SGZ_R(:) - Z_SG_real(:) >= -M_Z*(1-U_SG_Off_Mat(:))];
+C2 = [C2, W_SGZ_R(:) - Z_SG_real(:) <=  M_Z*(1-U_SG_Off_Mat(:))];
+C2 = [C2, W_SGZ_R(:)                >= -M_Z*U_SG_Off_Mat(:)];
+C2 = [C2, W_SGZ_R(:)                <=  M_Z*U_SG_Off_Mat(:)];
 
 G_sus   = 1/CONF.Xd_Gen;
 W_sum_X = Gen_Loc_Mat * W_SGZ_X;
 W_sum_R = Gen_Loc_Mat * W_SGZ_R;
 
 % W_GFMZ_* 表示投建 GFM-ES 后对应节点导纳对阻抗方程的影响。
-U_GFM_Row = repmat(u_GFM, 1, N);
+u_GFM_Candidate = u_GFM(GFM_Candidate_Idx);
+U_GFM_Row = repmat(u_GFM_Candidate, 1, N);
+Z_GFM_imag = Z_imag(GFM_Candidate_Idx,:);
+Z_GFM_real = Z_real(GFM_Candidate_Idx,:);
 
-C2 = [C2, W_GFMZ_X(:) - Z_imag(:) >= -CONF.M_BIG_Z*(1-U_GFM_Row(:))];
-C2 = [C2, W_GFMZ_X(:) - Z_imag(:) <=  CONF.M_BIG_Z*(1-U_GFM_Row(:))];
-C2 = [C2, W_GFMZ_X(:)             >= -CONF.M_BIG_Z*U_GFM_Row(:)];
-C2 = [C2, W_GFMZ_X(:)             <=  CONF.M_BIG_Z*U_GFM_Row(:)];
+C2 = [C2, W_GFMZ_X(:) - Z_GFM_imag(:) >= -M_Z*(1-U_GFM_Row(:))];
+C2 = [C2, W_GFMZ_X(:) - Z_GFM_imag(:) <=  M_Z*(1-U_GFM_Row(:))];
+C2 = [C2, W_GFMZ_X(:)                 >= -M_Z*U_GFM_Row(:)];
+C2 = [C2, W_GFMZ_X(:)                 <=  M_Z*U_GFM_Row(:)];
 
-C2 = [C2, W_GFMZ_R(:) - Z_real(:) >= -CONF.M_BIG_Z*(1-U_GFM_Row(:))];
-C2 = [C2, W_GFMZ_R(:) - Z_real(:) <=  CONF.M_BIG_Z*(1-U_GFM_Row(:))];
-C2 = [C2, W_GFMZ_R(:)             >= -CONF.M_BIG_Z*U_GFM_Row(:)];
-C2 = [C2, W_GFMZ_R(:)             <=  CONF.M_BIG_Z*U_GFM_Row(:)];
+C2 = [C2, W_GFMZ_R(:) - Z_GFM_real(:) >= -M_Z*(1-U_GFM_Row(:))];
+C2 = [C2, W_GFMZ_R(:) - Z_GFM_real(:) <=  M_Z*(1-U_GFM_Row(:))];
+C2 = [C2, W_GFMZ_R(:)                 >= -M_Z*U_GFM_Row(:)];
+C2 = [C2, W_GFMZ_R(:)                 <=  M_Z*U_GFM_Row(:)];
+
+W_GFMZ_X_full = GFM_Row_Map * W_GFMZ_X;
+W_GFMZ_R_full = GFM_Row_Map * W_GFMZ_R;
 
 Y0_R = real(Y0_all);
 Y0_I = imag(Y0_all);
 
-LHS_Real = Y0_R*Z_real - Y0_I*Z_imag - G_sus*W_sum_X + B_gfm*W_GFMZ_X;
-LHS_Imag = Y0_R*Z_imag + Y0_I*Z_real + G_sus*W_sum_R - B_gfm*W_GFMZ_R;
+LHS_Real = Y0_R*Z_real - Y0_I*Z_imag - G_sus*W_sum_X + B_gfm*W_GFMZ_X_full;
+LHS_Imag = Y0_R*Z_imag + Y0_I*Z_real + G_sus*W_sum_R - B_gfm*W_GFMZ_R_full;
 
 I_vec = reshape(eye(N), [], 1) * CONF.KZ;
 
@@ -176,7 +192,7 @@ C2 = [C2, LHS_Imag(:)         >= -CONF.ERR_TOL, LHS_Imag(:)         <= CONF.ERR_
 %% 4.4 短路电流水平约束
 PN_pu  = CONF.PN/CONF.Base_MVA;
 X_diag = diag(Z_imag);
-C3 = add_short_circuit_current_constraints(CONF, u_GFL, u_GFM, W_GFM, X_diag, DeltaY_abs, PN_pu);
+C3 = add_short_circuit_current_constraints(CONF, u_GFL, u_GFM, W_GFM, X_diag, DeltaY_abs, PN_pu, M_Z);
 
 %% 4.5 经典短路比约束
 C4 = add_classic_scr_constraints(CONF, u_GFL, X_diag, PN_pu);
@@ -203,6 +219,8 @@ if sol.problem == 0
 else
     disp(['Solver failed with code: ' num2str(sol.problem)]);
 end
+
+Diagnostics = build_single_snapshot_diagnostics(sol, N_GFM_Candidates, length(C), M_Z, Z_bounds);
 
 % 成本为了直观对比，选择了归一化到以小时为单位。
 value_Cost_Total = value(Objective)/8760;  

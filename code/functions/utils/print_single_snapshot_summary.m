@@ -7,4 +7,12 @@ fprintf('总成本：%.6f\n', Result.Cost.Total);
 fprintf('同步机启停 u_G：1 = 投运，0 = 停机。\n');
 disp(Result.u_G(:)');
 
+if isfield(Result, 'Diagnostics')
+    if isfield(Result.Diagnostics, 'impedance_big_m')
+        fprintf('阻抗线性化全局 M_Z：%.6g\n', Result.Diagnostics.impedance_big_m);
+    end
+    fprintf('YALMIP建模时间：%.3f s\n', Result.Diagnostics.yalmiptime);
+    fprintf('求解器时间：%.3f s\n', Result.Diagnostics.solvertime);
+end
+
 end

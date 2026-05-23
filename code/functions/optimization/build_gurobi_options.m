@@ -8,18 +8,18 @@ switch CONF.Num_Calculation
                           'savesolveroutput', 1, ...
                           'gurobi.NumericFocus', 3, ...
                           'gurobi.ScaleFlag', 2);
+        ops.gurobi.BarHomogeneous = 1;
+        ops.gurobi.Method = 1;
+        ops.gurobi.NodeMethod = 1;
+        ops.gurobi.DualReductions = 0;
     otherwise
         ops = sdpsettings('solver', 'gurobi', ...
                           'verbose', 2, ...
                           'savesolveroutput', 1);
 end
 
-ops.gurobi.BarHomogeneous  = 1;
-ops.gurobi.Method          = 1;
-ops.gurobi.NodeMethod      = 1;
 ops.gurobi.Threads         = 14;
 ops.gurobi.MIPGap          = 1e-2;
-ops.gurobi.DualReductions  = 0;
 ops.gurobi.OutputFlag      = 1;
 ops.gurobi.LogToConsole    = 1;
 ops.gurobi.DisplayInterval = 1;
