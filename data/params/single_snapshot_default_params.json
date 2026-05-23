@@ -1,0 +1,30 @@
+{
+  "LoadFactor": 1,
+  "BranchScale": {
+    "r": 2,
+    "x": 2,
+    "b": 0.5
+  },
+  "Xd_Gen": 0.04,
+  "GenCostLoading": 0.05,
+  "PN": 60,
+  "GFM_Candidates": [
+    9,
+    15,
+    20,
+    27
+  ],
+  "N_GFM_max": 2,
+  "GFL_Built_Nodes": [
+    11,
+    18
+  ],
+  "Cost_Conv_GFM": 657000,
+  "I_limit_kA": 11.5,
+  "SCR_min": 3,
+  "Num_Calculation": 1,
+  "M_BIG_L": 10000,
+  "M_BIG_Z": 10000,
+  "KZ": 1000,
+  "ERR_TOL_FACTOR": 1E-6
+}
