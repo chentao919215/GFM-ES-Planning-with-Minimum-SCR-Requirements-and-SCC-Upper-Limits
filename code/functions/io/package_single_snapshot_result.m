@@ -23,9 +23,6 @@ Result.u_G        = u_G;
 Result.Cost       = Cost;
 Result.solve_time = solve_time;
 Result.CONF       = CONF;
-
-if nargin >= 18
-    Result.Diagnostics = Diagnostics;
-end
+Result.Diagnostics = Diagnostics;
 
 end

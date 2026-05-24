@@ -64,14 +64,9 @@ CONF.Cost_Conv_GFM = params.Cost_Conv_GFM;
 CONF.I_limit = params.I_limit_kA/CONF.Base_kA;
 CONF.SCR_min = params.SCR_min;
 
-CONF.Num_Calculation = params.Num_Calculation;
 CONF.KZ      = params.KZ;
 CONF.ERR_TOL = params.ERR_TOL_FACTOR*CONF.KZ;
 
-if isfield(params, 'ZBoundMargin')
-    CONF.ZBoundMargin = params.ZBoundMargin;
-else
-    CONF.ZBoundMargin = 0.05;
-end
+CONF.ZBoundMargin = params.ZBoundMargin;
 
 end

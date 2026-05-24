@@ -22,7 +22,6 @@
   "Cost_Conv_GFM": 657000,
   "I_limit_kA": 11.5,
   "SCR_min": 3,
-  "Num_Calculation": 1,
   "KZ": 1000,
   "ZBoundMargin": 0.05,
   "ERR_TOL_FACTOR": 1E-6
