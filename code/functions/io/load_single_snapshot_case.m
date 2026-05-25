@@ -1,52 +1,40 @@
 function [mpc, CONF, paths] = load_single_snapshot_case(project_root, param_file)
-%LOAD_SINGLE_SNAPSHOT_CASE 读取单时刻规划算例与默认参数。
-
-if nargin < 1 || isempty(project_root)
-    project_root = find_project_root(mfilename('fullpath'));
-end
-
-default_param_file = fullfile(project_root, 'data', 'params', 'single_snapshot_default_params.json');
-if nargin < 2 || isempty(param_file)
-    param_file = default_param_file;
-end
-
-if strcmp(param_file, default_param_file) && exist(param_file, 'file') ~= 2
-    generator_file = fullfile(project_root, 'data', 'params', 'generate_single_snapshot_default_params.m');
-    if exist(generator_file, 'file') == 2
-        run(generator_file);
-    end
-end
-
+%% 本函数功能是根据参数文件生成单时刻规划算例数据。
 params = read_json_file(param_file);
 
-paths = struct();
-paths.project_root = project_root;
-paths.param_file   = param_file;
-paths.results_dir  = fullfile(project_root, 'results');
-ensure_directory(paths.results_dir);
+%% 1. 生成MATPOWER算例结构体:mpc
+mpc = case30; % 此处修改基准算例。
 
-mpc = case30;
+% 修改线路参数
+mpc.branch(:,3) = params.BranchScale.r*mpc.branch(:,3);
+mpc.branch(:,4) = params.BranchScale.x*mpc.branch(:,4);
+mpc.branch(:,5) = params.BranchScale.b*mpc.branch(:,5);
 
+% 修改机组成本
+mpc.gencost(:,7) = mpc.gencost(:,5).*((params.GenCostLoading*mpc.gen(:,9)).^2) + ...
+                   mpc.gencost(:,6).*(params.GenCostLoading*mpc.gen(:,9));
+
+%% 2. 生成优化配置结构体:CONF
 CONF = struct();
+
+% 算例规模参数
 CONF.Bn = size(mpc.bus, 1);
 CONF.Gn = size(mpc.gen, 1);
 CONF.Ln = size(mpc.branch, 1);
 
+% 基准值计算
 CONF.Base_MVA = mpc.baseMVA;
 CONF.Base_kV  = mpc.bus(1,10);
 CONF.Base_kA  = CONF.Base_MVA/(CONF.Base_kV*sqrt(3));
 CONF.Base_O   = CONF.Base_kV^(2)/CONF.Base_MVA;
 
+% 负荷系数
 CONF.LoadFactor = params.LoadFactor;
 
-mpc.branch(:,3) = params.BranchScale.r * mpc.branch(:,3);
-mpc.branch(:,4) = params.BranchScale.x * mpc.branch(:,4);
-mpc.branch(:,5) = params.BranchScale.b * mpc.branch(:,5);
+% 同步机次暂态电抗
+CONF.Xd_Gen     = params.Xd_Gen;
 
-CONF.Xd_Gen = params.Xd_Gen;
-mpc.gencost(:,7) = mpc.gencost(:,5).*((params.GenCostLoading*mpc.gen(:,9)).^2) + ...
-                   mpc.gencost(:,6).*(params.GenCostLoading*mpc.gen(:,9));
-
+% 变流器相关参数
 CONF.PN     = params.PN;
 CONF.I_post = 3*CONF.PN/CONF.Base_MVA;
 
@@ -61,12 +49,20 @@ CONF.u_GFL(params.GFL_Built_Nodes(:)) = 1;
 
 CONF.Cost_Conv_GFM = params.Cost_Conv_GFM;
 
+% 规划阈值参数
 CONF.I_limit = params.I_limit_kA/CONF.Base_kA;
 CONF.SCR_min = params.SCR_min;
 
+% 规划求解参数
 CONF.KZ      = params.KZ;
 CONF.ERR_TOL = params.ERR_TOL_FACTOR*CONF.KZ;
-
 CONF.ZBoundMargin = params.ZBoundMargin;
+
+%% 3. 生成路径结构体:paths
+paths = struct();
+paths.project_root = project_root;
+paths.param_file   = param_file;
+paths.results_dir  = fullfile(project_root, 'results');
+ensure_directory(paths.results_dir);
 
 end

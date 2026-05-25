@@ -1,5 +1,5 @@
 function Diagnostics = build_single_snapshot_diagnostics(sol)
-%BUILD_SINGLE_SNAPSHOT_DIAGNOSTICS 汇总求解诊断信息。
+%% 本函数功能是汇总求解诊断信息。
 
 Diagnostics = struct();
 Diagnostics.problem = sol.problem;

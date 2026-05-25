@@ -1,5 +1,5 @@
 function project_root = find_project_root(start_path)
-%FIND_PROJECT_ROOT 从给定路径向上查找项目根目录。
+%% 本函数功能是从给定路径向上查找项目根目录。
 
 if nargin < 1 || isempty(start_path)
     start_path = pwd;
@@ -12,9 +12,7 @@ else
 end
 
 while true
-    has_functions = isfolder(fullfile(current_dir, 'code', 'functions'));
-    has_params = isfile(fullfile(current_dir, 'data', 'params', 'single_snapshot_default_params.json'));
-    if has_functions && has_params
+    if is_project_root(current_dir)
         project_root = current_dir;
         return;
     end
@@ -26,4 +24,12 @@ while true
     current_dir = parent_dir;
 end
 
+end
+
+function tf = is_project_root(candidate)
+% 该函数判断候选目录是否为本项目根目录。
+
+tf = isfolder(fullfile(candidate, 'code', 'functions')) && ...
+     isfolder(fullfile(candidate, 'data', 'params')) && ...
+     isfile(fullfile(candidate, 'data', 'params', 'single_snapshot_default_params.json'));
 end

@@ -1,9 +1,8 @@
 function RunInfo = start_single_snapshot_planning_longrun(project_root)
-%START_SINGLE_SNAPSHOT_PLANNING_LONGRUN Start the planning script in the background.
+%% 本函数功能是在后台启动单时刻规划主脚本。
 %
-% The MATLAB MCP bridge has a short synchronous response window. This helper
-% starts the original script from a timer callback, suppresses solver console
-% output, and writes progress to a status file that can be polled externally.
+% MCP桥接调用的同步响应窗口较短。
+% 本函数通过timer回调启动主脚本，抑制求解器控制台输出，并将进度写入状态文件。
 
 if nargin < 1 || isempty(project_root)
     project_root = resolve_project_root();

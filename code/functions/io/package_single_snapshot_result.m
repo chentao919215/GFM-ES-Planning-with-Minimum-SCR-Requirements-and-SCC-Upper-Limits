@@ -1,6 +1,6 @@
 function Result = package_single_snapshot_result(SCC_0,SCC_1,P_Line,theta,P_G,P_GFL,P_GFM,...
     SCR,Z_val,u_GFL,u_GFM,u_G,Cost_CON,Cost_GEN,Cost_Total,solve_time,CONF,Diagnostics)
-%PACKAGE_SINGLE_SNAPSHOT_RESULT 将求解输出整理为统一结果结构体。
+%% 本函数功能是将求解输出整理为统一结果结构体。
 
 Cost = struct();
 Cost.Total = Cost_Total;

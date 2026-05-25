@@ -1,5 +1,5 @@
 function result_file = save_single_snapshot_result(Result, results_dir)
-%SAVE_SINGLE_SNAPSHOT_RESULT 保存单时刻规划结果。
+%% 本函数功能是保存单时刻规划结果。
 
 ensure_directory(results_dir);
 
