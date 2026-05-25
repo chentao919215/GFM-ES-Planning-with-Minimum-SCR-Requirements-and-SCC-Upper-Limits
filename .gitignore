@@ -1,2 +1,16 @@
-gurobi_run.log
-results/*.mat
+# Runtime logs and sockets
+logs/
+*.log
+*.sock
+
+# MATLAB/Gurobi generated outputs
+results/
+*.mat
+
+# Local-only tools and preferences
+tools/local/
+.matlab_prefs/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
