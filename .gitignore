@@ -7,6 +7,10 @@ logs/
 results/
 *.mat
 
+# Simulink generated caches
+slprj/
+*.slxc
+
 # Local-only tools and preferences
 tools/local/
 .matlab_prefs/
