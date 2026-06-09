@@ -24,18 +24,18 @@ R_C  = 3;      % 电容支路串联阻尼电阻
 fg = 50;       % 电网频率
 w0 = 2*pi*fg;  % dq 坐标系同步角速度
 
-target_bandwidth_hz = 20;     % 目标电流环交越频率
+target_bandwidth_hz = 100;      % 目标电流环交越频率
 wc = 2*pi*target_bandwidth_hz; % 目标电流环交越角频率
 
 % 手动Kp约束。
 % 连续平均模型下pidtune可能给出Kp=0。为了更贴近开关模型中的实现，
 % 此处默认强制Kp为一个正数，再重新计算Ki以保持目标交越频率。
 use_manual_kp_constraint = logical(str2double('1'));
-Kp_manual = 1;
+Kp_manual = 5;
 
 % 是否绘制图形(在需要快速生图时建议关闭)。
-show_rga_plots        = logical(str2double('1'));
-show_validation_plots = logical(str2double('1'));
+show_rga_plots        = logical(str2double('0'));
+show_validation_plots = logical(str2double('0'));
 
 %% 2. 建立考虑内部损耗的连续时间LCL模型
 % 状态变量：
