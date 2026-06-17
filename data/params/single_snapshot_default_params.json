@@ -7,21 +7,116 @@
   },
   "Xd_Gen": 0.04,
   "GenCostLoading": 0.05,
+  "AnnualHours": 8760,
+  "GenCostBreakpoints": [
+    0,
+    0.1,
+    0.2,
+    0.30000000000000004,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9,
+    1
+  ],
   "PN": 60,
+  "GFL_WG": {
+    "PN_MW": 60,
+    "I_Post_Multiplier": 3
+  },
   "GFM_Candidates": [
     9,
     15,
     20,
     27
   ],
-  "N_GFM_max": 2,
   "GFL_Built_Nodes": [
     11,
     18
   ],
   "Cost_Conv_GFM": 657000,
+  "X_GFM_res": 0.02,
+  "X_GFM_vir": 0.3133333333333333,
+  "GFM_Modules": {
+    "MaxModulesPerCandidate": 2,
+    "N_Module_Max": 4,
+    "EnforceSequentialBuild": true,
+    "Bus": [
+      9,
+      9,
+      15,
+      15,
+      20,
+      20,
+      27,
+      27
+    ],
+    "ModuleIndex": [
+      1,
+      2,
+      1,
+      2,
+      1,
+      2,
+      1,
+      2
+    ],
+    "PN_MW": [
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30,
+      30
+    ],
+    "Cost_Conv_GFM": [
+      328500,
+      328500,
+      328500,
+      328500,
+      328500,
+      328500,
+      328500,
+      328500
+    ],
+    "X_GFM_res": [
+      0.02,
+      0.02,
+      0.02,
+      0.02,
+      0.02,
+      0.02,
+      0.02,
+      0.02
+    ],
+    "I_Post_Multiplier": [
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3
+    ],
+    "X_GFM_vir": [
+      0.3133333333333333,
+      0.3133333333333333,
+      0.3133333333333333,
+      0.3133333333333333,
+      0.3133333333333333,
+      0.3133333333333333,
+      0.3133333333333333,
+      0.3133333333333333
+    ]
+  },
   "I_limit_kA": 11.5,
   "SCR_min": 3,
+  "Require_Source_Online": true,
   "KZ": 1000,
   "ZBoundMargin": 0.05,
   "ERR_TOL_FACTOR": 1E-6

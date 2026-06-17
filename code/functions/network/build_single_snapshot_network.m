@@ -33,10 +33,12 @@ NET.Gen_Cost_Const = mpc.gencost(:,7);
 
 % 机组有功出力上下限
 NET.Gen_Pmax = mpc.gen(:,9);
-NET.Gen_Pmin = mpc.gen(:,10);
+NET.Gen_Pmin = 0.05*mpc.gen(:,9);
 
 % 线路潮流计算参数
 NET.Line_B_series = CONF.Base_MVA ./ mpc.branch(:,4);
+NET.Line_Pmax = mpc.branch(:,6);
+NET.Line_Limited = isfinite(NET.Line_Pmax) & NET.Line_Pmax > 0;
 
 % 节点有功负荷
 P_Load_Profile = mpc.bus(NET.Load_Indices,3);
@@ -45,10 +47,6 @@ NET.P_Load = LoadFactor * P_Load_Base;
 
 % GFM-ES投建成本和候选节点掩码
 NET.Cost_Conv_GFM = CONF.Cost_Conv_GFM;
-
-cand_GFM = CONF.GFM_Candidates(:)';
-NET.Mask_GFM = false(N,1);
-NET.Mask_GFM(cand_GFM) = true;
 
 %% 3. 生成节点导纳矩阵
 % 线路参数
@@ -71,12 +69,16 @@ NET.Y0 = Y_ff + Y_tt + Y_ft + Y_tf;
 
 % 同步机内电势支路等效为节点接地导纳
 NET.Y_SG_Add = sparse(1:N, 1:N, (NET.Gen_Loc_Mat*ones(G,1)).*(1/(1i*CONF.Xd_Gen)), N, N);
-NET.Y0_all   = NET.Y0 + NET.Y_SG_Add;
 
 %% 4. 生成GFM-ES接入相关导纳参数
 NET.B_gfm = 1/CONF.X_GFM_res;
 
 NET.DeltaY = 1/(1i*(CONF.X_GFM_res+CONF.X_GFM_vir)) - 1/(1i*CONF.X_GFM_res);
 NET.DeltaY_abs = abs(NET.DeltaY)*ones(N,1);
+
+% 模块化GFM-ES导纳参数。
+NET.B_gfm_mod = 1 ./ CONF.GFM_Module_X_res(:);
+NET.DeltaY_mod = CONF.GFM_Module_DeltaY(:);
+NET.DeltaY_abs_mod = abs(NET.DeltaY_mod);
 
 end

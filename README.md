@@ -1,6 +1,6 @@
 # GFM-ES安全配置优化项目
 
-本项目面向高比例GFL-WG接入场景下的GFM-ES配置优化问题，目标是在统一优化框架中协调系统运行经济性、短路电流安全性与电压支撑强度。项目关注同步机启停状态、GFL-WG已接入状态以及GFM-ES投建决策之间的耦合关系，并通过SCC-SCR协同安全约束刻画不同设备在故障电流贡献和系统强度支撑方面的差异化作用。
+本项目面向高比例GFL-WG接入场景下的GFM-ES配置优化问题，目标是在统一优化框架中协调系统运行经济性、短路电流安全性与电压支撑强度。项目关注同步机启停状态、GFL-WG已接入状态以及GFM-ES模块化投建决策之间的耦合关系，并通过SCC-SCR协同安全约束刻画不同设备在故障电流贡献和系统强度支撑方面的差异化作用。
 
 ## 最终目标
 
@@ -12,20 +12,21 @@
 
 ## 当前进度
 
-当前代码已完成确定性、单时刻的IEEE-30节点GFM-ES配置优化原型，主要进展如下:
+当前代码已完成确定性、单时刻、模块化GFM-ES配置优化原型，主要进展如下:
 
-- 已搭建主脚本`code/scripts/run_single_snapshot_planning.m`，能够完成参数生成、参数加载、网络构建、优化求解、结果打包、结果保存与摘要输出。
-- 已实现已知GFL接入节点和候选GFM-ES节点下的规划模型，支持同步机启停、GFM-ES投建、节点功率平衡、线路潮流和机组出力约束。
-- 已将经典SCR下限约束和短路电流水平约束嵌入优化模型，用于刻画GFL节点的系统强度需求和故障电流安全边界。
-- 已通过阻抗矩阵重构与McCormick线性化约束，将安全约束转化为可由YALMIP与Gurobi求解的混合整数优化模型。
-- 已对核心函数进行精简、拆分和注释整理，当前版本以“维持主脚本可跑通、减少冗余功能、保持建模逻辑清晰”为整理原则。
+- 已搭建主脚本`code/scripts/system/run_single_snapshot_planning.m`，能够完成参数生成、参数加载、网络构建、优化求解、结果打包、结果保存与摘要输出。
+- 已实现已知GFL-WG接入节点和显式GFM-ES模块表下的规划模型，支持同步机启停、GFM-ES模块投建、GFM-ES模块出力、GFL-WG出力、节点功率平衡、线路潮流和机组出力约束。
+- GFM-ES当前以模块级变量`u_GFM_Mod`和`P_GFM_Mod`建模，不再使用节点级`u_GFM`规划变量；模块总投建上限由`GFM_Modules.N_Module_Max`统一控制。
+- 已将经典SCR下限约束和短路电流水平约束嵌入优化模型，用于刻画GFL-WG节点的系统强度需求和故障电流安全边界。
+- 已按文档模型对齐阻抗矩阵重构约束:以纯网络导纳矩阵`Y0`为基准，叠加在线同步机导纳贡献和已投建GFM-ES模块导纳贡献。
+- 已通过McCormick线性化约束，将阻抗重构和安全约束中的二元变量-连续变量乘积转化为可由YALMIP与Gurobi求解的混合整数线性模型。
 
 ## 运行入口
 
 主运行脚本为:
 
 ```text
-code/scripts/run_single_snapshot_planning.m
+code/scripts/system/run_single_snapshot_planning.m
 ```
 
 运行主脚本时，会先执行:
@@ -45,7 +46,7 @@ data/params/single_snapshot_default_params.json
 如需在自动化或后台场景中启动较长时间的求解任务，可以使用:
 
 ```text
-code/scripts/start_single_snapshot_planning_longrun.m
+code/scripts/system/start_single_snapshot_planning_longrun.m
 ```
 
 ## 参数维护
@@ -58,16 +59,44 @@ data/params/generate_single_snapshot_default_params.m
 
 维护参数时，优先修改该脚本，而不是直接修改生成后的JSON文件。主脚本每次运行前都会重新执行参数生成脚本，因此可以避免“修改了参数源脚本但忘记刷新JSON文件”的问题。
 
+当前模块化GFM-ES参数集中在`params.GFM_Modules`中维护，主要包括:
+
+- `Bus`: 每个GFM-ES模块对应的接入节点。
+- `ModuleIndex`: 同一候选节点内的模块序号。
+- `PN_MW`: 每个模块的额定有功容量。
+- `Cost_Conv_GFM`: 每个模块的年化投建成本。
+- `X_GFM_res`和`X_GFM_vir`: 每个模块的运行电抗与虚拟电抗。
+- `N_Module_Max`: 全系统允许投建的GFM-ES模块数量上限。
+- `EnforceSequentialBuild`: 是否启用同一节点内模块按序投建约束。
+
+旧的节点级投建上限`N_GFM_max`和同节点配置开关`Allow_GFM_GFL_CoLocation`已移除；当前模型以模块表为唯一GFM-ES规划输入。
+
+## 核心模型文件
+
+```text
+code/functions/optimization/solve_single_snapshot_planning.m
+```
+
+该函数构建并求解确定性单时刻模块化GFM-ES配置优化模型，主要包括:
+
+- 规划约束: GFM-ES模块总数上限与同节点模块排序约束。
+- 运行约束: DCOPF节点功率平衡、线路潮流、参考相角、同步机/GFL-WG/GFM-ES出力上下限。
+- 阻抗重构约束: `Y0*Z + ΣW_GZ + ΣW_GFMZ = I`的实部、虚部分解形式。
+- 安全约束: 短路电流水平上限和已建GFL-WG节点经典SCR下限。
+- 目标函数: 同步机年化运行成本的分段透视割近似和GFM-ES模块年化投建成本。
+
 ## 项目结构
 
 ```text
 code/
-  scripts/        主运行脚本、路径解析与后台启动入口
-  functions/      数据加载、网络构建、优化建模、安全约束与结果输出函数
+  scripts/system/      主运行脚本、路径解析与后台启动入口
+  scripts/equipment/   设备级仿真与参数计算脚本
+  functions/           数据加载、网络构建、优化建模、安全约束与结果输出函数
 data/
-  params/         默认算例参数源脚本及生成后的JSON参数文件
-docs/             项目说明与MATLAB环境排错记录
-results/          优化运行结果输出目录
+  params/              默认算例参数源脚本及生成后的JSON参数文件
+docs/                  模型文档、论文材料与环境说明
+results/               优化运行结果输出目录
+logs/                  辅助运行日志
 ```
 
 ## 环境说明
@@ -77,7 +106,5 @@ results/          优化运行结果输出目录
 ```text
 docs/matlab_environment_note.md
 ```
-
-该文档只用于环境排错，正常从MATLAB交互界面运行主脚本时通常不需要使用。
 
 当前仓库对应的是完整研究框架中的确定性单时刻建模与求解阶段；后续工作可在此基础上继续扩展多时段UC、GFL-WG不确定性建模以及分布鲁棒GFM-ES配置模型。

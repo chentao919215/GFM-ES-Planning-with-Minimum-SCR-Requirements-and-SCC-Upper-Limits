@@ -1,68 +1,188 @@
 function [mpc, CONF, paths] = load_single_snapshot_case(project_root, param_file)
-%% 本函数功能是根据参数文件生成单时刻规划算例数据。
+%% Build the single-snapshot MATPOWER case and optimization configuration.
 params = read_json_file(param_file);
 
-%% 1. 生成MATPOWER算例结构体:mpc
-mpc = case30; % 此处修改基准算例。
+%% 1. MATPOWER case
+mpc = case30;
 
-% 修改线路参数
 mpc.branch(:,3) = params.BranchScale.r*mpc.branch(:,3);
 mpc.branch(:,4) = params.BranchScale.x*mpc.branch(:,4);
 mpc.branch(:,5) = params.BranchScale.b*mpc.branch(:,5);
 
-% 修改机组成本
 mpc.gencost(:,7) = mpc.gencost(:,5).*((params.GenCostLoading*mpc.gen(:,9)).^2) + ...
                    mpc.gencost(:,6).*(params.GenCostLoading*mpc.gen(:,9));
 
-%% 2. 生成优化配置结构体:CONF
+%% 2. Optimization configuration
 CONF = struct();
 
-% 算例规模参数
 CONF.Bn = size(mpc.bus, 1);
 CONF.Gn = size(mpc.gen, 1);
 CONF.Ln = size(mpc.branch, 1);
 
-% 基准值计算
 CONF.Base_MVA = mpc.baseMVA;
 CONF.Base_kV  = mpc.bus(1,10);
 CONF.Base_kA  = CONF.Base_MVA/(CONF.Base_kV*sqrt(3));
 CONF.Base_O   = CONF.Base_kV^(2)/CONF.Base_MVA;
 
-% 负荷系数
 CONF.LoadFactor = params.LoadFactor;
+CONF.Xd_Gen = params.Xd_Gen;
+CONF.AnnualHours = params.AnnualHours;
+CONF.GenCostBreakpoints = params.GenCostBreakpoints(:)';
 
-% 同步机次暂态电抗
-CONF.Xd_Gen     = params.Xd_Gen;
+if CONF.AnnualHours <= 0
+    error('AnnualHours must be positive.');
+end
 
-% 变流器相关参数
-CONF.PN     = params.PN;
-CONF.I_post = 3*CONF.PN/CONF.Base_MVA;
+if isempty(CONF.GenCostBreakpoints) || any(CONF.GenCostBreakpoints < 0) || ...
+        any(CONF.GenCostBreakpoints > 1) || any(diff(CONF.GenCostBreakpoints) < 0)
+    error('GenCostBreakpoints must be a nondecreasing vector in [0, 1].');
+end
 
-CONF.X_GFM_res = CONF.Xd_Gen;
-CONF.X_GFM_vir = 1/CONF.I_post;
-
+% Legacy node-level fields are read explicitly only where downstream code
+% still needs them. They are no longer used as fallbacks for module fields.
+CONF.PN = params.PN;
 CONF.GFM_Candidates = params.GFM_Candidates(:)';
-CONF.N_GFM_max      = params.N_GFM_max;
 
+gfl_built_nodes = params.GFL_Built_Nodes(:);
 CONF.u_GFL = zeros(CONF.Bn,1);
-CONF.u_GFL(params.GFL_Built_Nodes(:)) = 1;
+CONF.u_GFL(gfl_built_nodes) = 1;
 
+gfl_params = params.GFL_WG;
+CONF.PN_GFL_Node = expand_built_node_parameter( ...
+    gfl_params.PN_MW, gfl_built_nodes, CONF.Bn, 'GFL_WG.PN_MW');
+CONF.PN_GFL = max(CONF.PN_GFL_Node(CONF.u_GFL > 0.5));
+CONF.PN_GFL_pu_Node = CONF.PN_GFL_Node/CONF.Base_MVA;
+
+gfl_i_post_multiplier = expand_built_node_parameter( ...
+    gfl_params.I_Post_Multiplier, gfl_built_nodes, CONF.Bn, ...
+    'GFL_WG.I_Post_Multiplier');
+CONF.I_post_GFL_Node = gfl_i_post_multiplier.*CONF.PN_GFL_Node/CONF.Base_MVA;
+CONF.I_post = max(CONF.I_post_GFL_Node);
+
+CONF.X_GFM_res = params.X_GFM_res;
+CONF.X_GFM_vir = params.X_GFM_vir;
 CONF.Cost_Conv_GFM = params.Cost_Conv_GFM;
+CONF.Require_Source_Online = logical(params.Require_Source_Online);
 
-% 规划阈值参数
-CONF.I_limit = params.I_limit_kA/CONF.Base_kA;
+GFMModules = build_gfm_module_params(params, CONF);
+CONF.GFM_Module_Count = GFMModules.Count;
+CONF.GFM_Module_Bus = GFMModules.Bus;
+CONF.GFM_Module_Order = GFMModules.Order;
+CONF.GFM_Module_PN = GFMModules.PN_MW;
+CONF.GFM_Module_PN_pu = GFMModules.PN_MW / CONF.Base_MVA;
+CONF.GFM_Module_Cost_Conv = GFMModules.Cost_Conv_GFM;
+CONF.GFM_Module_X_res = GFMModules.X_GFM_res;
+CONF.GFM_Module_I_post = GFMModules.I_post;
+CONF.GFM_Module_X_vir = GFMModules.X_GFM_vir;
+CONF.GFM_Module_DeltaY = GFMModules.DeltaY;
+CONF.GFM_Module_DeltaY_abs = abs(GFMModules.DeltaY);
+CONF.GFM_Module_Loc_Mat = sparse(GFMModules.Bus, (1:GFMModules.Count)', ...
+    1, CONF.Bn, GFMModules.Count);
+CONF.GFM_Module_Candidates = unique(GFMModules.Bus, 'stable')';
+CONF.N_GFM_Module_Max = GFMModules.N_Module_Max;
+CONF.GFM_MaxModulesPerCandidate = GFMModules.MaxModulesPerCandidate;
+CONF.GFM_Module_Sequential = GFMModules.EnforceSequentialBuild;
+CONF.GFM_Module_I_Post_Multiplier = GFMModules.I_Post_Multiplier;
+
+CONF.I_limit_kA_Node = expand_system_node_parameter(params.I_limit_kA, CONF.Bn, 'I_limit_kA');
+CONF.I_limit = CONF.I_limit_kA_Node/CONF.Base_kA;
 CONF.SCR_min = params.SCR_min;
 
-% 规划求解参数
-CONF.KZ      = params.KZ;
+CONF.KZ = params.KZ;
 CONF.ERR_TOL = params.ERR_TOL_FACTOR*CONF.KZ;
 CONF.ZBoundMargin = params.ZBoundMargin;
 
-%% 3. 生成路径结构体:paths
+%% 3. Paths
 paths = struct();
 paths.project_root = project_root;
-paths.param_file   = param_file;
-paths.results_dir  = fullfile(project_root, 'results');
+paths.param_file = param_file;
+paths.results_dir = fullfile(project_root, 'results');
 ensure_directory(paths.results_dir);
+
+end
+
+function GFMModules = build_gfm_module_params(params, CONF)
+%% Read the explicit modular GFM-ES parameter table.
+module_params = params.GFM_Modules;
+bus = module_params.Bus(:);
+
+n_modules = numel(bus);
+if n_modules == 0
+    error('GFM_Modules.Bus must contain at least one module.');
+end
+
+if any(bus < 1 | bus > CONF.Bn | fix(bus) ~= bus)
+    error('GFM_Modules.Bus contains an out-of-range or non-integer bus index.');
+end
+
+order = require_module_vector(module_params.ModuleIndex, n_modules, ...
+    'GFM_Modules.ModuleIndex');
+pn_mw = require_module_vector(module_params.PN_MW, n_modules, ...
+    'GFM_Modules.PN_MW');
+cost_conv = require_module_vector(module_params.Cost_Conv_GFM, n_modules, ...
+    'GFM_Modules.Cost_Conv_GFM');
+x_res = require_module_vector(module_params.X_GFM_res, n_modules, ...
+    'GFM_Modules.X_GFM_res');
+i_post_multiplier = require_module_vector(module_params.I_Post_Multiplier, ...
+    n_modules, 'GFM_Modules.I_Post_Multiplier');
+x_vir = require_module_vector(module_params.X_GFM_vir, n_modules, ...
+    'GFM_Modules.X_GFM_vir');
+
+GFMModules = struct();
+GFMModules.Count = n_modules;
+GFMModules.Bus = bus;
+GFMModules.Order = order;
+GFMModules.PN_MW = pn_mw;
+GFMModules.Cost_Conv_GFM = cost_conv;
+GFMModules.X_GFM_res = x_res;
+GFMModules.I_Post_Multiplier = i_post_multiplier;
+GFMModules.I_post = i_post_multiplier .* pn_mw / CONF.Base_MVA;
+GFMModules.X_GFM_vir = x_vir;
+GFMModules.DeltaY = 1 ./ (1i * (x_res + x_vir)) - 1 ./ (1i * x_res);
+GFMModules.N_Module_Max = module_params.N_Module_Max;
+GFMModules.MaxModulesPerCandidate = module_params.MaxModulesPerCandidate;
+GFMModules.EnforceSequentialBuild = logical(module_params.EnforceSequentialBuild);
+
+end
+
+function values = require_module_vector(values, n_modules, field_name)
+%% Require one explicit value per configured GFM-ES module.
+values = values(:);
+
+if numel(values) ~= n_modules
+    error('%s length must equal the number of modules: %d.', field_name, n_modules);
+end
+
+end
+
+function node_values = expand_built_node_parameter(values, built_nodes, n_nodes, field_name)
+%% Expand explicitly configured built-site parameters to a full bus vector.
+values = values(:);
+node_values = zeros(n_nodes, 1);
+
+if isscalar(values)
+    node_values(built_nodes) = values;
+elseif numel(values) == numel(built_nodes)
+    node_values(built_nodes) = values;
+elseif numel(values) == n_nodes
+    node_values = values;
+else
+    error('%s length must be 1, the number of built GFL nodes (%d), or the number of buses (%d).', ...
+        field_name, numel(built_nodes), n_nodes);
+end
+
+end
+
+function node_values = expand_system_node_parameter(values, n_nodes, field_name)
+%% Expand explicitly configured system-level node parameters to a bus vector.
+values = values(:);
+
+if isscalar(values)
+    node_values = repmat(values, n_nodes, 1);
+elseif numel(values) == n_nodes
+    node_values = values;
+else
+    error('%s length must be 1 or the number of buses: %d.', field_name, n_nodes);
+end
 
 end

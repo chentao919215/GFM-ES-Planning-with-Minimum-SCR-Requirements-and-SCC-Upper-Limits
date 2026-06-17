@@ -1,4 +1,4 @@
-function [SCC_0, SCC_1] = calculate_short_circuit_currents(Z_val, value_u_GFM, u_GFL, CONF, DeltaY, Y0, Y_SG_Add)
+function [SCC_0, SCC_1] = calculate_short_circuit_currents(Z_val, value_u_GFM_mod, u_GFL, CONF, Y0, Y_SG_Add)
 %% 本函数功能是计算基准状态和优化配置后的短路电流。
 %
 % SCC_0表示未考虑GFM-ES投建结果时的基准短路电流。
@@ -7,16 +7,18 @@ function [SCC_0, SCC_1] = calculate_short_circuit_currents(Z_val, value_u_GFM, u
 %% 1. 计算优化配置后的短路电流
 N = numel(u_GFL);
 SCC_1 = zeros(N,1);
+GFM_delta_node = CONF.GFM_Module_Loc_Mat * ...
+    (CONF.GFM_Module_DeltaY_abs(:).*value_u_GFM_mod(:));
 
 for i = 1:N
     % 由节点自阻抗得到等值电压源支路导纳
     Y_th = 1/(imag(Z_val(i,i))+1e-12);
 
-    % GFM-ES投建后会改变等值电压源支路导纳
-    I_vs = Y_th - value_u_GFM(i)*abs(DeltaY);
+    % 同一故障节点上的多个GFM-ES模块会共同改变等值电压源支路导纳
+    I_vs = Y_th - GFM_delta_node(i);
 
     % 已建GFL按电流源贡献计入短路电流
-    I_cs = (CONF.I_post+CONF.PN/CONF.Base_MVA)*u_GFL(i);
+    I_cs = (CONF.I_post_GFL_Node(i)+CONF.PN_GFL_pu_Node(i))*u_GFL(i);
 
     % 标幺短路电流换算为kA
     SCC_1(i) = (I_vs+I_cs)*CONF.Base_kA;

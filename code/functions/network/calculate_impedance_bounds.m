@@ -1,15 +1,15 @@
 function Z_bounds = calculate_impedance_bounds(NET, CONF)
 %% 本函数功能是枚举离散投运组合并估计阻抗矩阵逐元素上下界。
 % 阻抗上下界用于二进制-连续变量乘积的McCormick线性化。
-% 同步机组合枚举全部非全停状态，共2^G-1种。
-% GFM-ES组合枚举候选节点中投建数量不超过CONF.N_GFM_max的全部状态。
+% 同步机组合始终纳入全停状态；无电压源状态由Require_Source_Online剔除。
+% GFM-ES组合枚举满足模块投建规则的全部状态。
 
 %% 1. 生成离散投运组合
 N = NET.N;
 G = NET.G;
 
-sg_cases = dec2bin(1:(2^G-1))-'0';
-gfm_cases = local_build_gfm_cases(N, CONF);
+sg_cases = local_build_sg_cases(G);
+gfm_cases = local_build_gfm_module_cases(CONF);
 
 %% 2. 枚举组合并记录阻抗矩阵元素极值
 real_min =  inf(N,N);
@@ -18,7 +18,7 @@ imag_min =  inf(N,N);
 imag_max = -inf(N,N);
 
 Y_sg_unit  = 1/(1i*CONF.Xd_Gen);
-Y_gfm_unit = 1/(1i*CONF.X_GFM_res);
+Y_gfm_mod = 1 ./ (1i*CONF.GFM_Module_X_res(:));
 
 for sg_idx = 1:size(sg_cases, 1)
     sg_status = sg_cases(sg_idx,:).';
@@ -26,7 +26,12 @@ for sg_idx = 1:size(sg_cases, 1)
 
     for gfm_idx = 1:size(gfm_cases, 1)
         gfm_status = gfm_cases(gfm_idx,:).';
-        Y_gfm_diag = gfm_status * Y_gfm_unit;
+
+        if CONF.Require_Source_Online && ~any(sg_status) && ~any(gfm_status)
+            continue;
+        end
+
+        Y_gfm_diag = CONF.GFM_Module_Loc_Mat * (gfm_status .* Y_gfm_mod);
 
         Y_case = NET.Y0 + sparse(1:N, 1:N, Y_sg_diag + Y_gfm_diag, N, N);
 
@@ -60,27 +65,58 @@ Z_bounds.imag_max = imag_upper;
 
 end
 
-function gfm_cases = local_build_gfm_cases(N, CONF)
-% 该函数生成所有允许的GFM-ES投建组合。
+function sg_cases = local_build_sg_cases(G)
+% 该函数生成同步机投运组合。
+sg_cases = dec2bin(0:(2^G-1))-'0';
 
-candidate_nodes = CONF.GFM_Candidates(:).';
-candidate_nodes = candidate_nodes(CONF.u_GFL(candidate_nodes) == 0);
+end
 
-max_gfm = min(CONF.N_GFM_max, numel(candidate_nodes));
-num_cases = sum(arrayfun(@(k) nchoosek(numel(candidate_nodes), k), 0:max_gfm));
-gfm_cases = false(num_cases, N);
+function gfm_cases = local_build_gfm_module_cases(CONF)
+% 该函数生成所有允许的GFM-ES模块投建组合。
 
-case_idx = 1;
-for k = 0:max_gfm
-    if k == 0
-        case_idx = case_idx + 1;
-        continue;
-    end
+n_modules = CONF.GFM_Module_Count;
+eligible_modules = (1:n_modules).';
 
-    combos = nchoosek(candidate_nodes, k);
+max_modules = min(floor(CONF.N_GFM_Module_Max), numel(eligible_modules));
+
+gfm_cases = false(1, n_modules);
+
+for k = 1:max_modules
+    combos = nchoosek(eligible_modules, k);
+
     for row = 1:size(combos, 1)
-        gfm_cases(case_idx, combos(row,:)) = true;
-        case_idx = case_idx + 1;
+        status = false(1, n_modules);
+        status(combos(row,:)) = true;
+
+        if local_is_sequential_status(status, CONF)
+            gfm_cases = [gfm_cases; status]; %#ok<AGROW>
+        end
+    end
+end
+end
+
+function is_valid = local_is_sequential_status(status, CONF)
+% 该函数检查同一候选节点内的模块是否按序投建。
+
+if ~CONF.GFM_Module_Sequential
+    is_valid = true;
+    return;
+end
+
+module_bus = CONF.GFM_Module_Bus(:);
+module_order = CONF.GFM_Module_Order(:);
+unique_bus = unique(module_bus, 'stable');
+is_valid = true;
+
+for k = 1:numel(unique_bus)
+    idx = find(module_bus == unique_bus(k));
+    [~, order_idx] = sort(module_order(idx));
+    idx = idx(order_idx);
+    status_ordered = status(idx);
+
+    if any(status_ordered(2:end) > status_ordered(1:end-1))
+        is_valid = false;
+        return;
     end
 end
 end

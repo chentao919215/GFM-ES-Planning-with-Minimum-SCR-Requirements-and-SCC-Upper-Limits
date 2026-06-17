@@ -13,6 +13,9 @@ functions_dir = fullfile(project_root, 'code', 'functions');
 scripts_dir = fullfile(project_root, 'code', 'scripts');
 results_dir = fullfile(project_root, 'results');
 script_file = fullfile(scripts_dir, 'run_single_snapshot_planning.m');
+if ~isfile(script_file)
+    script_file = fullfile(fileparts(mfilename('fullpath')), 'run_single_snapshot_planning.m');
+end
 
 if ~isfolder(functions_dir)
     error('Missing functions directory: %s', functions_dir);

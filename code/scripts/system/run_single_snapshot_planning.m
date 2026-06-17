@@ -15,13 +15,15 @@ param_file = fullfile(project_root, 'data', 'params', 'single_snapshot_default_p
 tic;
 
 [SCC_0,SCC_1,P_Line,theta,P_G,P_GFL,P_GFM,SCR,Z_val,...
-    u_GFL,u_GFM,u_G,Cost_CON,Cost_GEN,Cost_Total,Diagnostics] = solve_single_snapshot_planning(mpc,CONF);
+    u_GFL,u_G,Cost_CON,Cost_GEN,Cost_Total,Diagnostics,...
+    u_GFM_Mod,P_GFM_Mod] = solve_single_snapshot_planning(mpc,CONF);
 
 time = toc;
 
 %% 3. 归档求解结果
 Result = package_single_snapshot_result(SCC_0,SCC_1,P_Line,theta,P_G,P_GFL,P_GFM,...
-    SCR,Z_val,u_GFL,u_GFM,u_G,Cost_CON,Cost_GEN,Cost_Total,time,CONF,Diagnostics);
+    SCR,Z_val,u_GFL,u_G,Cost_CON,Cost_GEN,Cost_Total,time,CONF,Diagnostics,...
+    u_GFM_Mod,P_GFM_Mod);
 
 %% 4. 保存并汇总结果
 result_file = save_single_snapshot_result(Result, paths.results_dir);

@@ -7,6 +7,11 @@ fprintf('总成本：%.6f\n', Result.Cost.Total);
 fprintf('同步机启停 u_G：1 = 投运，0 = 停机。\n');
 disp(Result.u_G(:)');
 
+if isfield(Result, 'u_GFM_Mod') && ~isempty(Result.u_GFM_Mod)
+    fprintf('GFM-ES模块投建 u_GFM_Mod：1 = 投建，0 = 不投建。\n');
+    disp(Result.u_GFM_Mod(:)');
+end
+
 fprintf('YALMIP建模时间：%.3f s\n', Result.Diagnostics.yalmiptime);
 fprintf('求解器时间：%.3f s\n', Result.Diagnostics.solvertime);
 
