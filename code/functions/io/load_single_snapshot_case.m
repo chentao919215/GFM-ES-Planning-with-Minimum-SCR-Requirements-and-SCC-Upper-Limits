@@ -3,7 +3,7 @@ function [mpc, CONF, paths] = load_single_snapshot_case(project_root, param_file
 params = read_json_file(param_file);
 
 %% 1. MATPOWER case
-mpc = case30;
+mpc = params.mpc;
 
 mpc.branch(:,3) = params.BranchScale.r*mpc.branch(:,3);
 mpc.branch(:,4) = params.BranchScale.x*mpc.branch(:,4);
@@ -19,10 +19,10 @@ CONF.Bn = size(mpc.bus, 1);
 CONF.Gn = size(mpc.gen, 1);
 CONF.Ln = size(mpc.branch, 1);
 
-CONF.Base_MVA = mpc.baseMVA;
-CONF.Base_kV  = mpc.bus(1,10);
-CONF.Base_kA  = CONF.Base_MVA/(CONF.Base_kV*sqrt(3));
-CONF.Base_O   = CONF.Base_kV^(2)/CONF.Base_MVA;
+CONF.Base_MVA = params.base_MVA;
+CONF.Base_kV  = params.base_kV;
+CONF.Base_kA  = params.base_kA;
+CONF.Base_O   = params.base_O;
 
 CONF.LoadFactor = params.LoadFactor;
 CONF.Xd_Gen = params.Xd_Gen;

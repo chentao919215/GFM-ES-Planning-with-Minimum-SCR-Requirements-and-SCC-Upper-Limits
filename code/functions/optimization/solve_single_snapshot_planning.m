@@ -7,8 +7,8 @@ function [SCC_0,SCC_1,value_P_Line,value_theta,value_P_G,value_P_GFL,value_P_GFM
 
 %% 1. 整理输入参数
 % u_GFL为已建GFL-WG节点状态，不作为优化变量。
-u_GFL = CONF.u_GFL(:);
-LoadFactor = CONF.LoadFactor;
+u_GFL      = CONF.u_GFL(:);
+LoadFactor = CONF.LoadFactor; % 表征负荷水平
 
 %% 2. 构造网络数据
 % 网络矩阵、负荷、成本、导纳和模块参数统一由network模块与CONF提供。
@@ -18,32 +18,58 @@ N = NET.N;
 G = NET.G;
 L = NET.L;
 M_GFM = CONF.GFM_Module_Count;
+N_GFM = numel(CONF.GFM_Module_Candidates);
+N_GFM_Module = CONF.GFM_MaxModulesPerCandidate;
 
-Gen_Loc_Mat = NET.Gen_Loc_Mat;
+% 候选节点检验与模块序号唯一性校验。
+module_bus = CONF.GFM_Module_Bus(:);
+module_order = CONF.GFM_Module_Order(:);
+[is_candidate, candidate_idx] = ismember(module_bus, CONF.GFM_Module_Candidates(:));
+if any(~is_candidate) || any(module_order < 1) || ...
+        any(module_order > N_GFM_Module) || any(fix(module_order) ~= module_order)
+    error('Invalid GFM-ES candidate bus or module index.');
+end
+module_linear_idx = sub2ind([N_GFM, N_GFM_Module], candidate_idx, module_order);
+if numel(unique(module_linear_idx)) ~= M_GFM
+    error('Each GFM-ES candidate bus and module index pair must be unique.');
+end
+active_module_mask = false(N_GFM, N_GFM_Module);
+active_module_mask(module_linear_idx) = true;
+
+% 元件-节点关联矩阵。
+Gen_Loc_Mat        = NET.Gen_Loc_Mat;
 GFM_Module_Loc_Mat = CONF.GFM_Module_Loc_Mat;
-Branch_From = NET.Branch_From;
-Branch_To = NET.Branch_To;
-Branch_Mat_From = NET.Branch_Mat_From;
-Branch_Mat_To = NET.Branch_Mat_To;
+Branch_From        = NET.Branch_From;
+Branch_To          = NET.Branch_To;
+Branch_Mat_From    = NET.Branch_Mat_From;
+Branch_Mat_To      = NET.Branch_Mat_To;
 
+% 同步机发电成本。
 Gen_Cost_Quad  = NET.Gen_Cost_Quad;
 Gen_Cost_Lin   = NET.Gen_Cost_Lin;
 Gen_Cost_Const = NET.Gen_Cost_Const;
 
+% 同步机出力上下限参数。
 Gen_Pmax = NET.Gen_Pmax;
 Gen_Pmin = NET.Gen_Pmin;
 
+% 线路参数。
 Line_B_series = NET.Line_B_series;
-Line_Pmax = NET.Line_Pmax;
-Line_Limited = NET.Line_Limited;
+Line_Pmax     = NET.Line_Pmax;
+Line_Limited  = NET.Line_Limited;
+
+% 负荷参数。
 P_Load = NET.P_Load;
+
+% GFM-ES参数。
 GFM_Module_PN = CONF.GFM_Module_PN(:);
 GFM_Module_Cost_Conv = CONF.GFM_Module_Cost_Conv(:);
-
-Y0 = NET.Y0;
-Y_SG_Add = NET.Y_SG_Add;
-B_gfm_mod = NET.B_gfm_mod;
+B_gfm_mod      = NET.B_gfm_mod;
 DeltaY_abs_mod = NET.DeltaY_abs_mod;
+
+% 初始节点导纳矩阵。
+Y0             = NET.Y0;
+Y_SG_Add       = NET.Y_SG_Add;
 
 % 阻抗矩阵元素上下界用于McCormick线性化。
 Z_bounds = calculate_impedance_bounds(NET, CONF);
@@ -51,7 +77,8 @@ Z_bounds = calculate_impedance_bounds(NET, CONF);
 %% 3. 定义优化变量
 % 二进制变量:同步机启停状态和GFM-ES模块投建状态。
 u_SG      = binvar(G,1,'full');
-u_GFM_mod = binvar(M_GFM,1,'full');
+u_GFM_mod = binvar(N_GFM,N_GFM_Module,'full');
+u_GFM_mod_table = u_GFM_mod(module_linear_idx);
 
 % 连续运行变量:各类电源出力、节点相角和线路潮流。
 P_SG      = sdpvar(G,1,'full');
@@ -68,12 +95,12 @@ Z_real = sdpvar(N,N,'symmetric');
 Z_imag = sdpvar(N,N,'symmetric');
 
 % 以下辅助变量用于线性化二元变量与阻抗元素的乘积。
-W_SGZ_X = sdpvar(G,N,'full');
-W_SGZ_R = sdpvar(G,N,'full');
+W_SGZ_X  = sdpvar(G,N,'full');
+W_SGZ_R  = sdpvar(G,N,'full');
 W_GFMZ_X = sdpvar(M_GFM,N,'full');
 W_GFMZ_R = sdpvar(M_GFM,N,'full');
-W_GFM = sdpvar(M_GFM,1,'full');
-Cost_SG = sdpvar(G,1,'full');
+W_GFM    = sdpvar(M_GFM,1,'full');
+Cost_SG  = sdpvar(G,1,'full');
 
 %% 4. 建立约束
 C = [];
@@ -81,21 +108,21 @@ C = [];
 %% 4.1 GFM-ES规划约束
 % 控制全系统GFM-ES模块投建数量上限。
 C_plan = [];
-C_plan = [C_plan, sum(u_GFM_mod) <= CONF.N_GFM_Module_Max];
+C_plan = [C_plan, u_GFM_mod(~active_module_mask) == 0];
+C_plan = [C_plan, sum(u_GFM_mod_table) <= CONF.N_GFM_Module_Max];
 
 % 同一候选节点内的模块可按序投建，以减少等价解。
 if CONF.GFM_Module_Sequential
-    module_bus = CONF.GFM_Module_Bus(:);
-    module_order = CONF.GFM_Module_Order(:);
+    module_bus        = CONF.GFM_Module_Bus(:);
+    module_order      = CONF.GFM_Module_Order(:);
     unique_module_bus = unique(module_bus, 'stable');
 
     for k_bus = 1:numel(unique_module_bus)
         idx = find(module_bus == unique_module_bus(k_bus));
         [~, order_idx] = sort(module_order(idx));
         idx = idx(order_idx);
-
         if numel(idx) > 1
-            C_plan = [C_plan, u_GFM_mod(idx(1:end-1)) >= u_GFM_mod(idx(2:end))];
+            C_plan = [C_plan, u_GFM_mod_table(idx(1:end-1)) >= u_GFM_mod_table(idx(2:end))];
         end
     end
 end
@@ -114,16 +141,12 @@ C1 = [C1, P_Line == Line_B_series .* dtheta];
 
 % 仅对MATPOWER中给定热稳定限额的线路施加潮流上下限。
 if any(Line_Limited)
-    C1 = [C1, P_Line(Line_Limited) <= Line_Pmax(Line_Limited)];
+    C1 = [C1, P_Line(Line_Limited) <=  Line_Pmax(Line_Limited)];
     C1 = [C1, P_Line(Line_Limited) >= -Line_Pmax(Line_Limited)];
 end
 C1 = [C1, theta(Ref_Bus_Idx) == 0];
 
-% 可选要求:至少存在一个同步机或GFM-ES模块作为电压源支撑。
-if CONF.Require_Source_Online
-    C1 = [C1, sum(u_SG) + sum(u_GFM_mod) >= 1];
-end
-
+% 同步机出力上下限约束。
 C1 = [C1, P_SG >= Gen_Pmin.*u_SG, P_SG <= Gen_Pmax.*u_SG];
 
 % 归一化同步机出力用于构造分段透视割成本约束。
@@ -134,8 +157,9 @@ end
 P_SG_Norm = spdiags(1./Gen_Prange, 0, G, G) * (P_SG - Gen_Pmin.*u_SG);
 C1 = [C1, P_SG_Norm >= 0, P_SG_Norm <= u_SG];
 
+% GFL-WG与GFM-ES出力约束。
 C1 = [C1, P_GFL >= 0, P_GFL <= CONF.PN_GFL_Node.*u_GFL];
-C1 = [C1, P_GFM_mod >= 0, P_GFM_mod <= GFM_Module_PN .* u_GFM_mod];
+C1 = [C1, P_GFM_mod >= 0, P_GFM_mod <= GFM_Module_PN .* u_GFM_mod_table];
 
 %% 4.3 阻抗矩阵重构约束
 % 采用文档中的形式:Y0*Z + 同步机在线贡献 + GFM-ES投建贡献 = I。
@@ -153,32 +177,32 @@ Z_SG_imag_U = Gen_Loc_Mat'*Z_bounds.imag_max;
 C2 = [C2, add_binary_product_bounds(W_SGZ_X, Z_SG_imag, U_SG_Row, Z_SG_imag_L, Z_SG_imag_U)];
 C2 = [C2, add_binary_product_bounds(W_SGZ_R, Z_SG_real, U_SG_Row, Z_SG_real_L, Z_SG_real_U)];
 
-G_sus = 1/CONF.Xd_Gen;
+G_sus   = -1/CONF.Xd_Gen;
 W_sum_X = Gen_Loc_Mat * W_SGZ_X;
 W_sum_R = Gen_Loc_Mat * W_SGZ_R;
 
 % GFM-ES模块贡献:W_GFMZ_* = u_GFM_mod .* Z(模块接入节点,:)。
-Z_GFM_real = GFM_Module_Loc_Mat' * Z_real;
-Z_GFM_imag = GFM_Module_Loc_Mat' * Z_imag;
-U_GFM_Mod_Row = repmat(u_GFM_mod, 1, N);
-Z_GFM_real_L = GFM_Module_Loc_Mat' * Z_bounds.real_min;
-Z_GFM_real_U = GFM_Module_Loc_Mat' * Z_bounds.real_max;
-Z_GFM_imag_L = GFM_Module_Loc_Mat' * Z_bounds.imag_min;
-Z_GFM_imag_U = GFM_Module_Loc_Mat' * Z_bounds.imag_max;
+Z_GFM_real = GFM_Module_Loc_Mat'*Z_real;
+Z_GFM_imag = GFM_Module_Loc_Mat'*Z_imag;
+U_GFM_Mod_Row = repmat(u_GFM_mod_table, 1, N);
+Z_GFM_real_L = GFM_Module_Loc_Mat'*Z_bounds.real_min;
+Z_GFM_real_U = GFM_Module_Loc_Mat'*Z_bounds.real_max;
+Z_GFM_imag_L = GFM_Module_Loc_Mat'*Z_bounds.imag_min;
+Z_GFM_imag_U = GFM_Module_Loc_Mat'*Z_bounds.imag_max;
 
 C2 = [C2, add_binary_product_bounds(W_GFMZ_X, Z_GFM_imag, U_GFM_Mod_Row, Z_GFM_imag_L, Z_GFM_imag_U)];
 C2 = [C2, add_binary_product_bounds(W_GFMZ_R, Z_GFM_real, U_GFM_Mod_Row, Z_GFM_real_L, Z_GFM_real_U)];
 
-B_gfm_mat = spdiags(B_gfm_mod(:), 0, M_GFM, M_GFM);
-W_gfm_sum_X = GFM_Module_Loc_Mat * (B_gfm_mat * W_GFMZ_X);
-W_gfm_sum_R = GFM_Module_Loc_Mat * (B_gfm_mat * W_GFMZ_R);
+B_gfm_mat   = spdiags(B_gfm_mod(:), 0, M_GFM, M_GFM);
+W_gfm_sum_X = GFM_Module_Loc_Mat*(B_gfm_mat*W_GFMZ_X);
+W_gfm_sum_R = GFM_Module_Loc_Mat*(B_gfm_mat*W_GFMZ_R);
 
 % 将复数矩阵方程拆成实部和虚部两个线性约束组。
 Y0_R = real(Y0);
 Y0_I = imag(Y0);
 
-LHS_Real = Y0_R*Z_real - Y0_I*Z_imag + G_sus*W_sum_X + W_gfm_sum_X;
-LHS_Imag = Y0_R*Z_imag + Y0_I*Z_real - G_sus*W_sum_R - W_gfm_sum_R;
+LHS_Real = Y0_R*Z_real - Y0_I*Z_imag - G_sus*W_sum_X - W_gfm_sum_X;
+LHS_Imag = Y0_R*Z_imag + Y0_I*Z_real + G_sus*W_sum_R + W_gfm_sum_R;
 
 I_vec = reshape(eye(N), [], 1) * CONF.KZ;
 
@@ -187,11 +211,11 @@ C2 = [C2, LHS_Imag(:) >= -CONF.ERR_TOL, LHS_Imag(:) <= CONF.ERR_TOL];
 
 %% 4.4 短路电流水平约束
 % 限制各故障节点的三相短路电流不超过给定上限。
-PN_pu = CONF.PN_GFL_pu_Node;
-X_diag = diag(Z_imag);
+PN_pu    = CONF.PN_GFL_pu_Node;
+X_diag   = diag(Z_imag);
 X_diag_L = diag(Z_bounds.imag_min);
 X_diag_U = diag(Z_bounds.imag_max);
-C3 = add_short_circuit_current_constraints(CONF, u_GFL, u_GFM_mod, W_GFM, X_diag, DeltaY_abs_mod, PN_pu, X_diag_L, X_diag_U);
+C3 = add_short_circuit_current_constraints(CONF, u_GFL, u_GFM_mod_table, W_GFM, X_diag, DeltaY_abs_mod, PN_pu, X_diag_L, X_diag_U);
 
 %% 4.5 经典短路比约束
 % 仅对已建GFL-WG节点施加经典SCR下限。
@@ -216,7 +240,7 @@ end
 C = [C, C_cost];
 
 Cost_GEN = sum(Cost_SG);
-Cost_GFM_Inv = GFM_Module_Cost_Conv' * u_GFM_mod;
+Cost_GFM_Inv = GFM_Module_Cost_Conv' * u_GFM_mod_table;
 Objective = Cost_GEN + Cost_GFM_Inv;
 
 %% 6. 调用求解器
@@ -247,6 +271,7 @@ value_P_Line = value(P_Line);
 value_u_G = value(u_SG);
 value_u_GFL = u_GFL;
 value_u_GFM_Mod = value(u_GFM_mod);
+value_u_GFM_Mod_Table = value_u_GFM_Mod(module_linear_idx);
 
 % 阻抗矩阵在模型中经过CONF.KZ缩放，输出时还原到原始标幺尺度。
 Z_real_val = value(Z_real)/CONF.KZ;
@@ -258,6 +283,6 @@ SCR = calculate_classic_scr(X_diag_val, u_GFL, PN_pu);
 
 %% 8. 计算短路电流指标
 % 分别输出基准状态和优化配置后的短路电流水平。
-[SCC_0, SCC_1] = calculate_short_circuit_currents(Z_val, value_u_GFM_Mod, u_GFL, CONF, Y0, Y_SG_Add);
+[SCC_0, SCC_1] = calculate_short_circuit_currents(Z_val, value_u_GFM_Mod_Table, u_GFL, CONF, Y0, Y_SG_Add);
 
 end

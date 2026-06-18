@@ -77,8 +77,8 @@ NET.DeltaY = 1/(1i*(CONF.X_GFM_res+CONF.X_GFM_vir)) - 1/(1i*CONF.X_GFM_res);
 NET.DeltaY_abs = abs(NET.DeltaY)*ones(N,1);
 
 % 模块化GFM-ES导纳参数。
-NET.B_gfm_mod = 1 ./ CONF.GFM_Module_X_res(:);
-NET.DeltaY_mod = CONF.GFM_Module_DeltaY(:);
+NET.B_gfm_mod      = -1./CONF.GFM_Module_X_res(:);
+NET.DeltaY_mod     = CONF.GFM_Module_DeltaY(:);
 NET.DeltaY_abs_mod = abs(NET.DeltaY_mod);
 
 end

@@ -25,7 +25,8 @@ ops.gurobi.DualReductions = 0;
 
 % 默认并行线程数、MIP间隙和日志刷新间隔
 ops.gurobi.Threads         = 14;
-ops.gurobi.MIPGap          = 1e-2;
+ops.gurobi.MIPGap          = 0;
+ops.gurobi.MIPGapAbs       = 0;
 ops.gurobi.DisplayInterval = 1;
 
 % 允许后台运行入口覆盖默认线程数

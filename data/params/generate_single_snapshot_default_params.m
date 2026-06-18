@@ -4,8 +4,16 @@
 % single_snapshot_default_params.json。
 
 clear params;
-param_dir = fileparts(mfilename('fullpath'));
+param_dir   = fileparts(mfilename('fullpath'));
 output_file = fullfile(param_dir, 'single_snapshot_default_params.json');
+
+%% 0. 读取Matpower基准值
+mpc          = case30;
+params.mpc      = mpc;
+params.base_MVA = mpc.baseMVA;
+params.base_kV  = mpc.bus(1,10);
+params.base_kA  = params.base_MVA/params.base_kV/sqrt(3);
+params.base_O   = params.base_kV^2/params.base_MVA;
 
 %% 1. 单时刻运行场景
 % LoadFactor:表示相对于IEEE-30原始负荷的比例。
@@ -63,10 +71,11 @@ params.GFM_Modules.Bus           = [9, 9, 15, 15, 20, 20, 27, 27];
 params.GFM_Modules.ModuleIndex   = [1, 2, 1, 2, 1, 2, 1, 2];
 params.GFM_Modules.PN_MW         = [30, 30, 30, 30, 30, 30, 30, 30];
 params.GFM_Modules.Cost_Conv_GFM = [328500, 328500, 328500, 328500, 328500, 328500, 328500, 328500];
-params.GFM_Modules.X_GFM_res     = [0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02];
+params.GFM_Modules.X_GFM_res     = [0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02]*...
+    params.base_MVA./params.GFM_Modules.PN_MW; % 设备级标幺值->系统级标幺值。
 params.GFM_Modules.I_Post_Multiplier = [3, 3, 3, 3, 3, 3, 3, 3];
-params.GFM_Modules.X_GFM_vir = 1 ./ params.GFM_Modules.I_Post_Multiplier - ...
-                               params.GFM_Modules.X_GFM_res;
+params.GFM_Modules.X_GFM_vir = (1./params.GFM_Modules.I_Post_Multiplier - 0.02)*...
+    params.base_MVA./params.GFM_Modules.PN_MW; % 设备级标幺值->系统级标幺值。
 
 %% 5. 安全约束参数
 % I_limit_kA:短路电流上限，单位为kA，可以为标量或全节点向量。
