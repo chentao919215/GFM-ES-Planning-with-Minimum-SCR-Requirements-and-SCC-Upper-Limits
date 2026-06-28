@@ -16,6 +16,7 @@ real_min =  inf(N,N);
 real_max = -inf(N,N);
 imag_min =  inf(N,N);
 imag_max = -inf(N,N);
+valid_case_count = 0;
 
 Y_sg_unit  = 1/(1i*CONF.Xd_Gen);
 Y_gfm_mod = 1 ./ (1i*CONF.GFM_Module_X_res(:));
@@ -35,7 +36,11 @@ for sg_idx = 1:size(sg_cases, 1)
 
         Y_case = NET.Y0 + sparse(1:N, 1:N, Y_sg_diag + Y_gfm_diag, N, N);
 
-        Z_case = local_inverse(Y_case);
+        [Z_case, is_invertible] = local_inverse(Y_case);
+        if ~is_invertible
+            continue;
+        end
+        valid_case_count = valid_case_count + 1;
         Z_real_case = CONF.KZ * real(Z_case);
         Z_imag_case = CONF.KZ * imag(Z_case);
 
@@ -44,6 +49,10 @@ for sg_idx = 1:size(sg_cases, 1)
         imag_min = min(imag_min, Z_imag_case);
         imag_max = max(imag_max, Z_imag_case);
     end
+end
+
+if valid_case_count == 0
+    error('No invertible equipment state was found for impedance bound calculation.');
 end
 
 %% 3. 添加安全裕度并输出上下界
@@ -121,14 +130,16 @@ for k = 1:numel(unique_bus)
 end
 end
 
-function Z = local_inverse(Y)
-% 该函数计算导纳矩阵逆矩阵，病态时使用伪逆兜底。
+function [Z, is_invertible] = local_inverse(Y)
+% 该函数仅对满足数值可逆条件的导纳矩阵计算逆矩阵。
 
 Y_full = full(Y);
 if rcond(Y_full) < 1e-10
-    Z = pinv(Y_full);
+    Z = [];
+    is_invertible = false;
 else
     Z = inv(Y_full);
+    is_invertible = true;
 end
 end
 

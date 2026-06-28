@@ -19,6 +19,7 @@ docs/**/*.docx
 # Local-only tools and preferences
 tools/local/
 .matlab_prefs/
+tmp/
 
 # OS/editor noise
 .DS_Store

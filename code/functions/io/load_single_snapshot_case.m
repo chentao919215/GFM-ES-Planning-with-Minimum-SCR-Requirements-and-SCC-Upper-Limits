@@ -24,23 +24,25 @@ CONF.Base_kV  = params.base_kV;
 CONF.Base_kA  = params.base_kA;
 CONF.Base_O   = params.base_O;
 
-CONF.LoadFactor = params.LoadFactor;
-CONF.Xd_Gen = params.Xd_Gen;
-CONF.AnnualHours = params.AnnualHours;
-CONF.GenCostBreakpoints = params.GenCostBreakpoints(:)';
-
-if CONF.AnnualHours <= 0
-    error('AnnualHours must be positive.');
+% 以下字段仅由单时刻模型使用；多时刻参数文件可以不再保留。
+if isfield(params, 'LoadFactor')
+    CONF.LoadFactor = params.LoadFactor;
 end
+if isfield(params, 'AnnualHours')
+    CONF.AnnualHours = params.AnnualHours;
+    if CONF.AnnualHours <= 0
+        error('AnnualHours must be positive.');
+    end
+end
+
+CONF.Xd_Gen = params.Xd_Gen;
+CONF.GenCostBreakpoints = params.GenCostBreakpoints(:)';
 
 if isempty(CONF.GenCostBreakpoints) || any(CONF.GenCostBreakpoints < 0) || ...
         any(CONF.GenCostBreakpoints > 1) || any(diff(CONF.GenCostBreakpoints) < 0)
     error('GenCostBreakpoints must be a nondecreasing vector in [0, 1].');
 end
 
-% Legacy node-level fields are read explicitly only where downstream code
-% still needs them. They are no longer used as fallbacks for module fields.
-CONF.PN = params.PN;
 CONF.GFM_Candidates = params.GFM_Candidates(:)';
 
 gfl_built_nodes = params.GFL_Built_Nodes(:);
@@ -59,9 +61,6 @@ gfl_i_post_multiplier = expand_built_node_parameter( ...
 CONF.I_post_GFL_Node = gfl_i_post_multiplier.*CONF.PN_GFL_Node/CONF.Base_MVA;
 CONF.I_post = max(CONF.I_post_GFL_Node);
 
-CONF.X_GFM_res = params.X_GFM_res;
-CONF.X_GFM_vir = params.X_GFM_vir;
-CONF.Cost_Conv_GFM = params.Cost_Conv_GFM;
 CONF.Require_Source_Online = logical(params.Require_Source_Online);
 
 GFMModules = build_gfm_module_params(params, CONF);

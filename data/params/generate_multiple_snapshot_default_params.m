@@ -1,0 +1,189 @@
+%% 生成多时刻GFM-ES配置算例的默认参数文件
+% 本文件是给人阅读和维护的参数源文件；JSON文件是给程序读取的参数文件。
+% 修改参数时，优先修改本脚本，然后运行本脚本重新生成参数文件:
+% multiple_snapshot_default_params.json。
+
+clear params;
+param_dir   = fileparts(mfilename('fullpath'));
+output_file = fullfile(param_dir, 'multiple_snapshot_default_params.json');
+
+%% 0. 读取Matpower基准值
+mpc             = case30;
+params.mpc      = mpc;
+params.base_MVA = mpc.baseMVA;
+params.base_kV  = mpc.bus(1,10);
+params.base_kA  = params.base_MVA/params.base_kV/sqrt(3);
+params.base_O   = params.base_kV^2/params.base_MVA;
+
+%% 1. 多时刻运行场景
+% 采用1个确定性典型日，每个典型日包含12个连续2小时时段。
+% TypicalDayWeights_Days表示各典型日代表的实际天数，合计应为365天。
+% PeriodDurations_Hours表示各时段持续小时数，单个典型日内合计应为24小时。
+params.MultipleSnapshot = struct();
+params.MultipleSnapshot.TypicalDayCount         = 1;
+params.MultipleSnapshot.PeriodCount             = 12;
+params.MultipleSnapshot.TypicalDayWeights_Days  = 365;
+params.MultipleSnapshot.PeriodDurations_Hours   = 2*ones(1,12);
+params.MultipleSnapshot.LoadProfileSource       = 'MOST ex_load_profile';
+params.MultipleSnapshot.WindProfileSource       = 'MOST ex_wind_profile_d';
+
+%% 2. 线路参数修正
+% r、x、b:MATPOWER branch表中的电阻、电抗和线路充电电纳。
+params.BranchScale = struct();
+params.BranchScale.r = 2;
+params.BranchScale.x = 2;
+params.BranchScale.b = 0.5;
+
+%% 3. 同步机与变流器基础参数
+% Xd_Gen:同步机暂态电抗。
+% GenCostLoading:构造同步机固定成本项，现在5%出力时的成本为固定成本。
+params.Xd_Gen = 0.04;
+params.GenCostLoading = 0.05;
+
+% Gen_Pmin_MW为同步机最小有功出力，当前沿用5%额定出力。
+params.Gen_Pmin_MW = 0.05*mpc.gen(:,9);
+
+% GenCostBreakpoints为归一化同步机出力的分段透视割切点。
+params.GenCostBreakpoints = 0:0.1:1;
+
+% GFL_WG用于显式记录已建GFL-WG场站参数。
+% PN_MW可以为标量、与GFL_Built_Nodes等长的向量，或全节点向量。
+params.GFL_WG = struct();
+params.GFL_WG.PN_MW = 60;
+params.GFL_WG.I_Post_Multiplier = 3;
+
+%% 4. GFM-ES规划参数
+% GFM_Candidates:允许投建GFM-ES的节点集合。
+params.GFM_Candidates = [9, 15, 20, 27];
+
+% GFL_Built_Nodes:已建GFL节点集合。
+params.GFL_Built_Nodes = [11, 18];
+
+% GFM_Modules定义模块化GFM-ES参数表。
+params.GFM_Modules = struct();
+params.GFM_Modules.MaxModulesPerCandidate = 2;
+params.GFM_Modules.N_Module_Max           = 4;
+params.GFM_Modules.EnforceSequentialBuild = true;
+params.GFM_Modules.Bus           = [9, 9, 15, 15, 20, 20, 27, 27];
+params.GFM_Modules.ModuleIndex   = [1, 2, 1, 2, 1, 2, 1, 2];
+
+% 额定功率与单位功率成本
+params.GFM_Modules.PN_MW         = [30, 30, 30, 30, 30, 30, 30, 30];
+params.GFM_Modules.Annual_Cost_Power_per_MW = ...
+    [10950, 10950, 10950, 10950, 10950, 10950, 10950, 10950];
+
+% 额定能量与单位能量成本
+params.GFM_Modules.Rated_Energy_MWh = zeros(1,8);
+params.GFM_Modules.Annual_Cost_Energy_per_MWh = zeros(1,8);
+
+% 投建GFM-ES的总成本
+params.GFM_Modules.Cost_Conv_GFM = ...
+    params.GFM_Modules.Annual_Cost_Power_per_MW .* params.GFM_Modules.PN_MW + ...
+    params.GFM_Modules.Annual_Cost_Energy_per_MWh .* params.GFM_Modules.Rated_Energy_MWh;
+
+% 运行阻抗：设备级标幺值->系统级标幺值
+params.GFM_Modules.X_GFM_res = [0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02]*...
+    params.base_MVA./params.GFM_Modules.PN_MW;
+params.GFM_Modules.I_Post_Multiplier = [3, 3, 3, 3, 3, 3, 3, 3];
+% 虚拟阻抗：设备级标幺值->系统级标幺值。
+params.GFM_Modules.X_GFM_vir = (1./params.GFM_Modules.I_Post_Multiplier - 0.02)*...
+    params.base_MVA./params.GFM_Modules.PN_MW;
+
+%% 5. 确定性逐时负荷与GFL-WG可用出力
+% 逐时数据按[节点,典型日,时段]三维数组保存。
+% 负荷采用MOST的12时段确定性系统负荷曲线相对其基准负荷的变化倍率。
+% GFL-WG采用MOST的12时段确定性风电出力倍率，各已建场站共用同一条曲线。
+D = params.MultipleSnapshot.TypicalDayCount;
+T = params.MultipleSnapshot.PeriodCount;
+
+% ex_load_profile配套的MOST基准算例为ex_case3b。
+% 各时段负荷倍率等于MOST逐时系统负荷除以MOST系统基准负荷。
+MOST_load_profile = ex_load_profile;
+MOST_base_case    = loadcase('ex_case3b');
+MOST_load_base_MW = total_load(MOST_base_case.bus,MOST_base_case.gen);
+load_total_MW     = MOST_load_profile.values(:,1,1);
+load_factor       = load_total_MW/MOST_load_base_MW;
+load_node_period  = mpc.bus(:,3)*load_factor.';
+params.MultipleSnapshot.LoadFactor = load_factor;
+params.MultipleSnapshot.Load_P_MW = ...
+    repmat(reshape(load_node_period, size(mpc.bus,1), 1, T), 1, D, 1);
+
+% ex_wind_profile_d中的values为风电机组额定功率的确定性可用出力倍率。
+MOST_wind_profile     = ex_wind_profile_d;
+wind_available_factor = MOST_wind_profile.values(:,1,1);
+GFL_rated_node        = zeros(size(mpc.bus,1),1);
+GFL_rated_node(params.GFL_Built_Nodes) = params.GFL_WG.PN_MW;
+GFL_node_period = GFL_rated_node*wind_available_factor.';
+params.MultipleSnapshot.GFL_Available_P_MW = ...
+    repmat(reshape(GFL_node_period, size(mpc.bus,1), 1, T), 1, D, 1);
+
+%% 6. 安全约束参数
+% I_limit_kA:短路电流上限，单位为kA，可以为标量或全节点向量。
+params.I_limit_kA = 11.5;
+
+% SCR_min:经典短路比下限，无量纲。
+params.SCR_min = 3;
+
+% Require_Source_Online:是否要求每个时刻至少一个同步机或GFM-ES模块投运/投建。
+params.Require_Source_Online = false;
+
+%% 7. 求解器与数值参数
+% KZ:放大阻抗元素，改善数值稳健性。
+params.KZ = 1e3;
+
+% ZBoundMargin:枚举离散投运组合估计Z元素上下界时保留的安全裕度。
+params.ZBoundMargin = 0.005;
+
+% ERR_TOL_FACTOR:会乘以KZ得到阻抗矩阵约束的绝对容差。
+params.ERR_TOL_FACTOR = 1e-6;
+
+%% 8. 求解性能参数
+% 日常开发采用0.5%%相对间隙和10分钟时限；最终论文算例可单独收紧。
+params.Solver = struct();
+params.Solver.Threads = 14;
+params.Solver.MIPGap = 0.005;
+params.Solver.TimeLimit = 3600;
+params.Solver.MIPFocus = 1;
+params.Solver.Heuristics = 0.2;
+params.Solver.NoRelHeurWork = 0;
+% 将年成本目标缩放到约10的数量级，不改变最优解与原始成本输出。
+params.Solver.ObjectiveScale = 1e5;
+% 仅在算例维度与模块顺序完全兼容时读取最近一次成功结果的整数解。
+params.Solver.UseLatestMIPStart = true;
+
+% 两阶段求解：第一阶段优先寻找高质量可行解，第二阶段利用该解强化下界并证明最优性。
+% 第二阶段允许0.5%的相对最优性间隙，并采用两路并发MIP搜索降低搜索路径偶然性。
+% 若达到3600秒时限仍有更大间隙，程序会保存当前最优可行解及其最优性间隙。
+params.Solver.TwoStage = struct();
+params.Solver.TwoStage.Enabled = true;
+params.Solver.TwoStage.Stage1 = struct( ...
+    'Name', 'feasible-search', ...
+    'TimeLimit', 600, ...
+    'MIPGap', 0.005, ...
+    'MIPFocus', 1, ...
+    'Heuristics', 0.2);
+params.Solver.TwoStage.Stage2 = struct( ...
+    'Name', 'optimality-proof', ...
+    'TimeLimit', 3600, ...
+    'MIPGap', 0, ...
+    'MIPFocus', 3, ...
+    'Heuristics', 0.01, ...
+    'ConcurrentMIP', 2);
+
+%% 9. 写出JSON文件
+json_text = jsonencode(params, 'PrettyPrint', true);
+
+fid = fopen(output_file, 'w', 'n', 'UTF-8');
+if fid < 0
+    error('Cannot open parameter output file: %s', output_file);
+end
+fprintf(fid, '%s\n', json_text);
+fclose(fid);
+
+fprintf('已生成参数文件：%s\n', output_file);
+
+%% 10. 清除本脚本生成的变量
+clear D T ans fid GFL_node_period GFL_rated_node json_text load_node_period ...
+    load_factor load_total_MW MOST_base_case MOST_load_base_MW ...
+    MOST_load_profile MOST_wind_profile output_file param_dir params ...
+    wind_available_factor
