@@ -7,6 +7,8 @@ MIPStart.u_G = reshape(round(Result.u_G), ...
 MIPStart.u_G_SCC = round(Result.u_G_SCC(:));
 MIPStart.u_G_SCR = round(Result.u_G_SCR(:));
 MIPStart.u_GFM_Mod = round(Result.u_GFM_Mod);
+MIPStart.u_GFM_Ch = reshape(round(Result.u_GFM_Ch), ...
+    CONF.GFM_Candidate_Count, CONF.TypicalDayCount, CONF.PeriodCount);
 MIPStart.SourceFile = '';
 MIPStart.SourceStage = get_result_stage(Result);
 

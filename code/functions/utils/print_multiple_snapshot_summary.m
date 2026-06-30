@@ -15,6 +15,19 @@ if isfield(Result, 'u_GFM_Mod') && ~isempty(Result.u_GFM_Mod)
     disp(Result.u_GFM_Mod);
 end
 
+if isfield(Result, 'E_GFM') && ~isempty(Result.E_GFM)
+    fprintf('GFM-ES候选节点日内SOC范围（按已投建额定能量归一化）：\n');
+    installed_energy = Result.CONF.GFM_Candidate_Module_Mat* ...
+        (Result.CONF.GFM_Module_Rated_Energy(:).*Result.u_GFM_Mod( ...
+        sub2ind(size(Result.u_GFM_Mod), ...
+        Result.CONF.GFM_Module_Candidate_Index(:), ...
+        Result.CONF.GFM_Module_Order(:))));
+    soc_value = Result.E_GFM./reshape(installed_energy,[],1,1);
+    soc_value(~isfinite(soc_value)) = NaN;
+    disp([min(soc_value,[],[2,3],'omitnan'), ...
+        max(soc_value,[],[2,3],'omitnan')]);
+end
+
 fprintf('YALMIP建模时间：%.3f s\n', Result.Diagnostics.yalmiptime);
 fprintf('求解器时间：%.3f s\n', Result.Diagnostics.solvertime);
 if isfield(Result.Diagnostics, 'has_incumbent') && Result.Diagnostics.has_incumbent

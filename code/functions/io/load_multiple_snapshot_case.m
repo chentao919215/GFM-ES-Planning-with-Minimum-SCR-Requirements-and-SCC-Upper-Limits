@@ -57,6 +57,7 @@ CONF.GFM_Module_Order = GFMModules.Order;
 CONF.GFM_Module_PN = GFMModules.PN_MW;
 CONF.GFM_Module_PN_pu = GFMModules.PN_MW/CONF.Base_MVA;
 CONF.GFM_Module_Cost_Conv = GFMModules.Cost_Conv_GFM;
+CONF.GFM_Module_Rated_Energy = GFMModules.Rated_Energy_MWh;
 CONF.GFM_Module_X_res = GFMModules.X_GFM_res;
 CONF.GFM_Module_I_post = GFMModules.I_post;
 CONF.GFM_Module_X_vir = GFMModules.X_GFM_vir;
@@ -64,7 +65,19 @@ CONF.GFM_Module_DeltaY = GFMModules.DeltaY;
 CONF.GFM_Module_DeltaY_abs = abs(GFMModules.DeltaY);
 CONF.GFM_Module_Loc_Mat = sparse(GFMModules.Bus,(1:GFMModules.Count)', ...
     1,CONF.Bn,GFMModules.Count);
-CONF.GFM_Module_Candidates = unique(GFMModules.Bus,'stable')';
+CONF.GFM_Module_Candidates = GFMModules.CandidateBus(:)';
+CONF.GFM_Module_Candidate_Index = GFMModules.CandidateIndex;
+CONF.GFM_Candidate_Count = numel(GFMModules.CandidateBus);
+CONF.GFM_Candidate_Loc_Mat = sparse(GFMModules.CandidateBus, ...
+    (1:CONF.GFM_Candidate_Count)',1,CONF.Bn,CONF.GFM_Candidate_Count);
+CONF.GFM_Candidate_Module_Mat = sparse(GFMModules.CandidateIndex, ...
+    (1:GFMModules.Count)',1,CONF.GFM_Candidate_Count,GFMModules.Count);
+CONF.GFM_Candidate_Charge_Efficiency = GFMModules.CandidateChargeEfficiency;
+CONF.GFM_Candidate_Discharge_Efficiency = GFMModules.CandidateDischargeEfficiency;
+CONF.GFM_Candidate_Rated_Duration = GFMModules.CandidateRatedDuration;
+CONF.GFM_Candidate_SOC_Max = GFMModules.CandidateSOCMax;
+CONF.GFM_Candidate_SOC_Initial = GFMModules.CandidateSOCInitial;
+CONF.GFM_Candidate_SOC_Min = GFMModules.CandidateSOCMin;
 CONF.N_GFM_Module_Max = GFMModules.N_Module_Max;
 CONF.GFM_MaxModulesPerCandidate = GFMModules.MaxModulesPerCandidate;
 CONF.GFM_Module_Sequential = GFMModules.EnforceSequentialBuild;
@@ -111,10 +124,9 @@ CONF.P_GFL_Available_Profile = reshape(multi.GFL_Available_P_MW, CONF.Bn, D, T);
 CONF.Gen_Pmin = params.Gen_Pmin_MW(:);
 
 %% 8. 计算文档口径下的GFM-ES模块年化投建成本
-modules      = params.GFM_Modules;
-power_cost   = modules.Annual_Cost_Power_per_MW(:);
-energy_cost  = modules.Annual_Cost_Energy_per_MWh(:);
-rated_energy = modules.Rated_Energy_MWh(:);
+power_cost   = GFMModules.Annual_Cost_Power_per_MW;
+energy_cost  = GFMModules.Annual_Cost_Energy_per_MWh;
+rated_energy = GFMModules.Rated_Energy_MWh;
 
 CONF.GFM_Module_Annual_Cost_Power  = power_cost.*CONF.GFM_Module_PN(:);
 CONF.GFM_Module_Annual_Cost_Energy = energy_cost.*rated_energy;
@@ -136,12 +148,47 @@ module_params = params.GFM_Modules;
 bus = module_params.Bus(:);
 
 n_modules = numel(bus);
-order = module_params.ModuleIndex(:);
-pn_mw = module_params.PN_MW(:);
-cost_conv = module_params.Cost_Conv_GFM(:);
-x_res = module_params.X_GFM_res(:);
-i_post_multiplier = module_params.I_Post_Multiplier(:);
-x_vir = module_params.X_GFM_vir(:);
+order = expand_module_parameter(module_params.ModuleIndex, n_modules, 'ModuleIndex');
+pn_mw = expand_module_parameter(module_params.PN_MW, n_modules, 'PN_MW');
+cost_conv = expand_module_parameter(module_params.Cost_Conv_GFM, n_modules, 'Cost_Conv_GFM');
+x_res = expand_module_parameter(module_params.X_GFM_res, n_modules, 'X_GFM_res');
+i_post_multiplier = expand_module_parameter( ...
+    module_params.I_Post_Multiplier, n_modules, 'I_Post_Multiplier');
+x_vir = expand_module_parameter(module_params.X_GFM_vir, n_modules, 'X_GFM_vir');
+rated_energy = expand_module_parameter( ...
+    module_params.Rated_Energy_MWh, n_modules, 'Rated_Energy_MWh');
+power_cost = expand_module_parameter( ...
+    module_params.Annual_Cost_Power_per_MW, n_modules, ...
+    'Annual_Cost_Power_per_MW');
+energy_cost = expand_module_parameter( ...
+    module_params.Annual_Cost_Energy_per_MWh, n_modules, ...
+    'Annual_Cost_Energy_per_MWh');
+charge_efficiency = expand_module_parameter( ...
+    module_params.Charge_Efficiency, n_modules, 'Charge_Efficiency');
+discharge_efficiency = expand_module_parameter( ...
+    module_params.Discharge_Efficiency, n_modules, 'Discharge_Efficiency');
+soc_max = expand_module_parameter(module_params.SOC_Max, n_modules, 'SOC_Max');
+soc_initial = expand_module_parameter( ...
+    module_params.SOC_Initial, n_modules, 'SOC_Initial');
+soc_min = expand_module_parameter(module_params.SOC_Min, n_modules, 'SOC_Min');
+
+validate_gfm_storage_parameters(pn_mw, rated_energy, charge_efficiency, ...
+    discharge_efficiency, soc_min, soc_initial, soc_max);
+
+candidate_bus = unique(bus,'stable');
+[~, candidate_index] = ismember(bus,candidate_bus);
+candidate_charge_efficiency = collapse_candidate_parameter( ...
+    charge_efficiency,candidate_index,numel(candidate_bus),'Charge_Efficiency');
+candidate_discharge_efficiency = collapse_candidate_parameter( ...
+    discharge_efficiency,candidate_index,numel(candidate_bus),'Discharge_Efficiency');
+candidate_rated_duration = collapse_candidate_parameter( ...
+    rated_energy./pn_mw,candidate_index,numel(candidate_bus),'Rated_Duration_Hours');
+candidate_soc_max = collapse_candidate_parameter( ...
+    soc_max,candidate_index,numel(candidate_bus),'SOC_Max');
+candidate_soc_initial = collapse_candidate_parameter( ...
+    soc_initial,candidate_index,numel(candidate_bus),'SOC_Initial');
+candidate_soc_min = collapse_candidate_parameter( ...
+    soc_min,candidate_index,numel(candidate_bus),'SOC_Min');
 
 GFMModules = struct();
 GFMModules.Count = n_modules;
@@ -149,14 +196,73 @@ GFMModules.Bus = bus;
 GFMModules.Order = order;
 GFMModules.PN_MW = pn_mw;
 GFMModules.Cost_Conv_GFM = cost_conv;
+GFMModules.Rated_Energy_MWh = rated_energy;
+GFMModules.Annual_Cost_Power_per_MW = power_cost;
+GFMModules.Annual_Cost_Energy_per_MWh = energy_cost;
 GFMModules.X_GFM_res = x_res;
 GFMModules.I_Post_Multiplier = i_post_multiplier;
 GFMModules.I_post = i_post_multiplier.*pn_mw/CONF.Base_MVA;
 GFMModules.X_GFM_vir = x_vir;
 GFMModules.DeltaY = 1./(1i*(x_res+x_vir))-1./(1i*x_res);
+GFMModules.CandidateBus = candidate_bus;
+GFMModules.CandidateIndex = candidate_index;
+GFMModules.CandidateChargeEfficiency = candidate_charge_efficiency;
+GFMModules.CandidateDischargeEfficiency = candidate_discharge_efficiency;
+GFMModules.CandidateRatedDuration = candidate_rated_duration;
+GFMModules.CandidateSOCMax = candidate_soc_max;
+GFMModules.CandidateSOCInitial = candidate_soc_initial;
+GFMModules.CandidateSOCMin = candidate_soc_min;
 GFMModules.N_Module_Max = module_params.N_Module_Max;
 GFMModules.MaxModulesPerCandidate = module_params.MaxModulesPerCandidate;
 GFMModules.EnforceSequentialBuild = logical(module_params.EnforceSequentialBuild);
+
+end
+
+function values = expand_module_parameter(values, n_modules, field_name)
+%% 将模块参数扩展为与模块表等长的列向量。
+
+values = values(:);
+if isscalar(values)
+    values = repmat(values,n_modules,1);
+elseif numel(values) ~= n_modules
+    error('GFM_Modules.%s的长度应为1或模块数量%d。',field_name,n_modules);
+end
+
+end
+
+function validate_gfm_storage_parameters(pn_mw, rated_energy, charge_efficiency, ...
+    discharge_efficiency, soc_min, soc_initial, soc_max)
+%% 校验GFM-ES储能参数是否满足文档模型的物理取值范围。
+
+if any(pn_mw <= 0)
+    error('GFM-ES模块额定功率必须为正数。');
+end
+if any(rated_energy <= 0)
+    error('GFM-ES模块额定储存能量必须为正数。');
+end
+if any(charge_efficiency <= 0 | charge_efficiency > 1) || ...
+        any(discharge_efficiency <= 0 | discharge_efficiency > 1)
+    error('GFM-ES充电效率和放电效率必须位于区间(0,1]。');
+end
+if any(soc_min < 0 | soc_max > 1 | soc_min > soc_initial | ...
+        soc_initial > soc_max)
+    error('GFM-ES SOC参数必须满足0<=SOC_Min<=SOC_Initial<=SOC_Max<=1。');
+end
+
+end
+
+function candidate_values = collapse_candidate_parameter(module_values, ...
+    candidate_index, candidate_count, field_name)
+%% 将模块参数整理为候选节点参数，并校验同一节点内模块参数相同。
+
+candidate_values = zeros(candidate_count,1);
+for k = 1:candidate_count
+    values_k = module_values(candidate_index == k);
+    if any(abs(values_k-values_k(1)) > 1e-12)
+        error('同一候选节点内各模块的GFM_Modules.%s必须相同。',field_name);
+    end
+    candidate_values(k) = values_k(1);
+end
 
 end
 

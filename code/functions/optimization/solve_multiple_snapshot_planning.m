@@ -1,10 +1,12 @@
 function [SCC_0,SCC_1,value_P_Line,value_theta,value_P_G,value_P_GFL,value_P_GFM,...
     SCR,Z_SCC_val,Z_SCR_val,value_u_GFL,value_u_G,value_u_G_SCC,value_u_G_SCR,...
     value_Cost_CON,value_Cost_GEN,value_Cost_Total,Diagnostics,...
-    value_u_GFM_Mod,value_P_GFM_Mod] = solve_multiple_snapshot_planning(mpc,CONF)
+    value_u_GFM_Mod,value_P_GFM_Dis,value_P_GFM_Ch,value_E_GFM,...
+    value_u_GFM_Ch] = solve_multiple_snapshot_planning(mpc,CONF)
 %% 构建并求解确定性多时刻模块化GFM-ES配置优化模型
 % GFL-WG接入状态与逐时可用出力由参数文件给定；GFM-ES以模块为规划对象。
-% 本函数负责建立多时刻DCOPF、聚合安全工况、阻抗重构、安全约束和成本目标。
+% 本函数负责建立多时刻DCOPF、GFM-ES能量循环、聚合安全工况、阻抗重构、
+% 安全约束和成本目标。
 
 %% 1. 整理输入参数
 % u_GFL为已建GFL-WG节点状态，不作为优化变量。
@@ -20,7 +22,7 @@ N = NET.N;
 G = NET.G;
 L = NET.L;
 M_GFM = CONF.GFM_Module_Count;
-N_GFM = numel(CONF.GFM_Module_Candidates);
+N_GFM = CONF.GFM_Candidate_Count;
 N_GFM_Module = CONF.GFM_MaxModulesPerCandidate;
 
 % 候选节点检验与模块序号唯一性校验。
@@ -33,7 +35,8 @@ active_module_mask(module_linear_idx) = true;
 
 % 元件-节点关联矩阵。
 Gen_Loc_Mat        = NET.Gen_Loc_Mat;
-GFM_Module_Loc_Mat = CONF.GFM_Module_Loc_Mat;
+GFM_Candidate_Loc_Mat = CONF.GFM_Candidate_Loc_Mat;
+GFM_Candidate_Module_Mat = CONF.GFM_Candidate_Module_Mat;
 Branch_From        = NET.Branch_From;
 Branch_To          = NET.Branch_To;
 Branch_Mat_From    = NET.Branch_Mat_From;
@@ -55,8 +58,16 @@ P_GFL_Max     = NET.P_GFL_Available_Profile;
 
 % GFM-ES模块参数。
 GFM_Module_PN        = CONF.GFM_Module_PN(:);
+GFM_Module_Energy    = CONF.GFM_Module_Rated_Energy(:);
 GFM_Module_Cost_Conv = CONF.GFM_Module_Cost_Conv(:);
 DeltaY_abs_mod       = NET.DeltaY_abs_mod;
+
+% 同一候选节点内各模块采用相同的充放电效率和SOC参数。
+GFM_Charge_Efficiency    = CONF.GFM_Candidate_Charge_Efficiency(:);
+GFM_Discharge_Efficiency = CONF.GFM_Candidate_Discharge_Efficiency(:);
+GFM_SOC_Max              = CONF.GFM_Candidate_SOC_Max(:);
+GFM_SOC_Initial          = CONF.GFM_Candidate_SOC_Initial(:);
+GFM_SOC_Min              = CONF.GFM_Candidate_SOC_Min(:);
 
 % 阻抗矩阵元素上下界用于McCormick线性化。
 Z_bounds = calculate_impedance_bounds(NET, CONF);
@@ -69,6 +80,10 @@ u_SG = binvar(G,D,T,'full');
 u_GFM_mod       = binvar(N_GFM,N_GFM_Module,'full');
 u_GFM_mod_table = u_GFM_mod(module_linear_idx);
 
+% 候选节点聚合GFM-ES的逐时充放电状态，1表示充电，0表示放电。
+% 当充电功率和放电功率均为零时，该状态可取任一值。
+u_GFM_ch = binvar(N_GFM,D,T,'full');
+
 % 最大短路电流水平工况采用逐时同步机状态并集，最弱SCR工况采用其交集。
 u_SG_SCC = binvar(G,1,'full');
 u_SG_SCR = binvar(G,1,'full');
@@ -76,7 +91,9 @@ u_SG_SCR = binvar(G,1,'full');
 % 连续运行变量:各类电源出力、节点相角和线路潮流。
 P_SG      = sdpvar(G,D,T,'full');
 P_GFL     = sdpvar(N,D,T,'full');
-P_GFM_mod = sdpvar(M_GFM,D,T,'full');
+P_GFM_dis = sdpvar(N_GFM,D,T,'full');
+P_GFM_ch  = sdpvar(N_GFM,D,T,'full');
+E_GFM     = sdpvar(N_GFM,D,T,'full');
 P_GFM     = sdpvar(N,D,T,'full');
 P_SG_Norm = sdpvar(G,D,T,'full');
 theta     = sdpvar(N,D,T,'full');
@@ -111,6 +128,15 @@ C_plan = [];
 C_plan = [C_plan, u_GFM_mod(~active_module_mask) == 0];
 C_plan = [C_plan, sum(u_GFM_mod_table) <= CONF.N_GFM_Module_Max];
 
+% 将已投建模块的额定功率与额定能量聚合到候选节点。
+P_GFM_Installed = GFM_Candidate_Module_Mat* ...
+    (GFM_Module_PN.*u_GFM_mod_table);
+E_GFM_Installed = GFM_Candidate_Module_Mat* ...
+    (GFM_Module_Energy.*u_GFM_mod_table);
+N_GFM_Installed = GFM_Candidate_Module_Mat*u_GFM_mod_table;
+P_GFM_Candidate_Upper = GFM_Candidate_Module_Mat*GFM_Module_PN;
+E_GFM_Initial = GFM_SOC_Initial.*E_GFM_Installed;
+
 % 同一候选节点内的模块可按序投建，以减少等价解。
 if CONF.GFM_Module_Sequential
     unique_module_bus = unique(module_bus, 'stable');
@@ -139,15 +165,18 @@ for d = 1:D
         u_SG_dt = u_SG(:,d,t);
         P_SG_dt = P_SG(:,d,t);
         P_GFL_dt = P_GFL(:,d,t);
-        P_GFM_mod_dt = P_GFM_mod(:,d,t);
+        P_GFM_dis_dt = P_GFM_dis(:,d,t);
+        P_GFM_ch_dt = P_GFM_ch(:,d,t);
+        E_GFM_dt = E_GFM(:,d,t);
+        u_GFM_ch_dt = u_GFM_ch(:,d,t);
         P_GFM_dt = P_GFM(:,d,t);
         P_SG_Norm_dt = P_SG_Norm(:,d,t);
         theta_dt = theta(:,d,t);
         P_Line_dt = P_Line(:,d,t);
 
-        % 将模块出力聚合到对应节点。
+        % 候选节点GFM-ES净注入功率等于放电功率减去充电功率。
         C_operation = [C_operation, ...
-            P_GFM_dt == GFM_Module_Loc_Mat*P_GFM_mod_dt];
+            P_GFM_dt == GFM_Candidate_Loc_Mat*(P_GFM_dis_dt-P_GFM_ch_dt)];
 
         % 节点有功功率平衡约束。
         P_SG_Node_dt = Gen_Loc_Mat*P_SG_dt;
@@ -175,9 +204,30 @@ for d = 1:D
         C_operation = [C_operation, P_GFL_dt >= 0, ...
             P_GFL_dt <= P_GFL_Max(:,d,t).*u_GFL];
 
-        % GFM-ES仅考虑放电状态，各模块逐时出力不超过额定有功功率。
-        C_operation = [C_operation, P_GFM_mod_dt >= 0, ...
-            P_GFM_mod_dt <= GFM_Module_PN.*u_GFM_mod_table];
+        % 充电功率和放电功率均不超过已投建模块的聚合额定功率。
+        % 第二组上界利用充放电状态避免同一时刻同时充电和放电。
+        C_operation = [C_operation, ...
+            u_GFM_ch_dt <= N_GFM_Installed, ...
+            P_GFM_ch_dt >= 0, P_GFM_ch_dt <= P_GFM_Installed, ...
+            P_GFM_ch_dt <= P_GFM_Candidate_Upper.*u_GFM_ch_dt, ...
+            P_GFM_dis_dt >= 0, P_GFM_dis_dt <= P_GFM_Installed, ...
+            P_GFM_dis_dt <= P_GFM_Candidate_Upper.*(1-u_GFM_ch_dt)];
+
+        % 储能量按时段持续小时数递推；首时段从给定初始SOC对应的能量开始。
+        delta_t = CONF.PeriodDurations_Hours(t);
+        if t == 1
+            E_GFM_prev = E_GFM_Initial;
+        else
+            E_GFM_prev = E_GFM(:,d,t-1);
+        end
+        C_operation = [C_operation, E_GFM_dt == E_GFM_prev + ...
+            GFM_Charge_Efficiency.*P_GFM_ch_dt*delta_t - ...
+            P_GFM_dis_dt.*delta_t./GFM_Discharge_Efficiency];
+
+        % 各时刻结束储能量受SOC上下限约束；未投建节点的能量自动固定为零。
+        C_operation = [C_operation, ...
+            E_GFM_dt >= GFM_SOC_Min.*E_GFM_Installed, ...
+            E_GFM_dt <= GFM_SOC_Max.*E_GFM_Installed];
 
         % 可选地要求每个时刻至少存在一个同步机或GFM-ES模块作为电压源。
         if CONF.Require_Source_Online
@@ -185,6 +235,9 @@ for d = 1:D
                 sum(u_SG_dt) + sum(u_GFM_mod_table) >= 1];
         end
     end
+
+    % 每个典型日末恢复到初始SOC，保证典型日内部能量循环闭合。
+    C_operation = [C_operation, E_GFM(:,d,T) == E_GFM_Initial];
 end
 
 %% 4.3 聚合安全状态约束
@@ -278,6 +331,9 @@ if isfield(CONF, 'MIPStart')
     assign(u_SG_SCC, CONF.MIPStart.u_G_SCC);
     assign(u_SG_SCR, CONF.MIPStart.u_G_SCR);
     assign(u_GFM_mod, CONF.MIPStart.u_GFM_Mod);
+    if isfield(CONF.MIPStart, 'u_GFM_Ch')
+        assign(u_GFM_ch, CONF.MIPStart.u_GFM_Ch);
+    end
     ops.usex0 = 1;
     ops.warmstart = 1;
 end
@@ -304,7 +360,9 @@ value_Cost_CON = value(Cost_GFM_Inv);
 
 % 逐时结果保持[元件,典型日,时段]三维索引结构。
 value_P_GFL = value(P_GFL);
-value_P_GFM_Mod = value(P_GFM_mod);
+value_P_GFM_Dis = value(P_GFM_dis);
+value_P_GFM_Ch = value(P_GFM_ch);
+value_E_GFM = value(E_GFM);
 value_P_GFM = value(P_GFM);
 value_P_G = value(P_SG);
 value_theta = value(theta);
@@ -315,6 +373,7 @@ value_u_GFL = u_GFL;
 value_u_G_SCC = value(u_SG_SCC);
 value_u_G_SCR = value(u_SG_SCR);
 value_u_GFM_Mod = value(u_GFM_mod);
+value_u_GFM_Ch = value(u_GFM_ch);
 
 % 阻抗矩阵在模型中经过CONF.KZ缩放，输出时还原到原始标幺尺度。
 Z_SCC_val = value(Z_SCC_real)/CONF.KZ + 1i*value(Z_SCC_imag)/CONF.KZ;
