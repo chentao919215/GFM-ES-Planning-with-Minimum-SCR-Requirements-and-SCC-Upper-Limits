@@ -30,9 +30,9 @@ params.MultipleSnapshot.WindProfileSource       = 'MOST ex_wind_profile_d';
 %% 2. 线路参数修正
 % r、x、b:MATPOWER branch表中的电阻、电抗和线路充电电纳。
 params.BranchScale = struct();
-params.BranchScale.r = 2;
-params.BranchScale.x = 2;
-params.BranchScale.b = 0.5;
+params.BranchScale.r = 1.75;
+params.BranchScale.x = 1.75;
+params.BranchScale.b = 4/7;
 
 %% 3. 同步机与变流器基础参数
 % Xd_Gen:同步机暂态电抗。
@@ -68,15 +68,16 @@ params.GFM_Modules.Bus           = [9, 9, 15, 15, 20, 20, 27, 27];
 params.GFM_Modules.ModuleIndex   = [1, 2, 1, 2, 1, 2, 1, 2];
 
 % 额定功率与单位功率成本
-params.GFM_Modules.PN_MW         = [30, 30, 30, 30, 30, 30, 30, 30];
+params.GFM_Modules.PN_MW         = [60, 60, 60, 60, 60, 60, 60, 60];
 params.GFM_Modules.Annual_Cost_Power_per_MW = ...
     [9600, 9600, 9600, 9600, 9600, 9600, 9600, 9600];
 
 % 储能参数：当前采用保守默认值，后续可按实际设备参数替换。
-% 每个模块额定储存能量为60 MWh，充电效率和放电效率均为0.9。
-params.GFM_Modules.Rated_Energy_MWh = 60*ones(1,8);
+% 每个模块额定储存能量为120 MWh，充电效率和放电效率均为0.9。
+params.GFM_Modules.Rated_Energy_MWh = 120*ones(1,8);
 params.GFM_Modules.Annual_Cost_Energy_per_MWh = ...
     [37120, 37120, 37120, 37120, 37120, 37120, 37120, 37120];
+% params.GFM_Modules.Annual_Cost_Energy_per_MWh = zeros(1,8);
 
 % SOC上限、初始值和下限分别为0.9、0.5和0.1。
 params.GFM_Modules.Charge_Efficiency    = 0.9;
@@ -90,12 +91,14 @@ params.GFM_Modules.Cost_Conv_GFM = ...
     params.GFM_Modules.Annual_Cost_Power_per_MW .* params.GFM_Modules.PN_MW + ...
     params.GFM_Modules.Annual_Cost_Energy_per_MWh .* params.GFM_Modules.Rated_Energy_MWh;
 
-% 运行阻抗：设备级标幺值->系统级标幺值
-params.GFM_Modules.X_GFM_res = [0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02]*...
-    params.base_MVA./params.GFM_Modules.PN_MW;
+% 故障电流倍数
 params.GFM_Modules.I_Post_Multiplier = [3, 3, 3, 3, 3, 3, 3, 3];
-% 虚拟阻抗：设备级标幺值->系统级标幺值。
-params.GFM_Modules.X_GFM_vir = (1./params.GFM_Modules.I_Post_Multiplier - 0.02)*...
+
+% 运行与虚拟阻抗：设备级标幺值->系统级标幺值
+params.GFM_Modules.X_GFM_res = [0.04, 0.04, 0.04, 0.04, 0.04, 0.04, 0.04, 0.04];
+params.GFM_Modules.X_GFM_vir = (1./params.GFM_Modules.I_Post_Multiplier - ...
+    params.GFM_Modules.X_GFM_res)*params.base_MVA./params.GFM_Modules.PN_MW;
+params.GFM_Modules.X_GFM_res        = params.GFM_Modules.X_GFM_res*...
     params.base_MVA./params.GFM_Modules.PN_MW;
 
 %% 5. 确定性逐时负荷与GFL-WG可用出力
@@ -128,7 +131,7 @@ params.MultipleSnapshot.GFL_Available_P_MW = ...
 
 %% 6. 安全约束参数
 % I_limit_kA:短路电流上限，单位为kA，可以为标量或全节点向量。
-params.I_limit_kA = 11.5;
+params.I_limit_kA = 12.5;
 
 % SCR_min:经典短路比下限，无量纲。
 params.SCR_min = 3;
@@ -151,14 +154,14 @@ params.ERR_TOL_FACTOR = 1e-6;
 params.Solver = struct();
 params.Solver.Threads = 14;
 params.Solver.MIPGap = 0.005;
-params.Solver.TimeLimit = 3600;
+params.Solver.TimeLimit = 600;
 params.Solver.MIPFocus = 1;
 params.Solver.Heuristics = 0.2;
 params.Solver.NoRelHeurWork = 0;
 % 将年成本目标缩放到约10的数量级，不改变最优解与原始成本输出。
 params.Solver.ObjectiveScale = 1e5;
 % 仅在算例维度与模块顺序完全兼容时读取最近一次成功结果的整数解。
-params.Solver.UseLatestMIPStart = true;
+params.Solver.UseLatestMIPStart = false;
 
 % 两阶段求解：第一阶段优先寻找高质量可行解，第二阶段利用该解强化下界并证明最优性。
 % 第二阶段允许0.5%的相对最优性间隙，并采用两路并发MIP搜索降低搜索路径偶然性。

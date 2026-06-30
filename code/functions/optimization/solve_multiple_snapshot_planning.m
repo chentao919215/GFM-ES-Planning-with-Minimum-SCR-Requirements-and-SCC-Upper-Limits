@@ -287,6 +287,7 @@ C_scc = add_short_circuit_current_constraints(CONF, u_GFL, ...
 % 最弱电压支撑强度约束仅使用同步机状态交集对应的Z_SCR。
 X_diag_SCR = diag(Z_SCR_imag);
 C_scr = add_classic_scr_constraints(CONF, u_GFL, X_diag_SCR, PN_pu);
+C_scr = [C_scr, sum(u_SG_SCR) + sum(u_GFM_mod_table) >= 1];
 
 %% 5. 构造目标函数
 % 同步机单位时间运行成本采用归一化出力上的分段透视割近似。

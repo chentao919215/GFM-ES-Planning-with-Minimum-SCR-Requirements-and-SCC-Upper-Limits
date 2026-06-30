@@ -6,6 +6,7 @@ logs/
 # MATLAB/Gurobi generated outputs
 results/
 *.mat
+*.asv
 
 # Simulink generated caches
 slprj/
