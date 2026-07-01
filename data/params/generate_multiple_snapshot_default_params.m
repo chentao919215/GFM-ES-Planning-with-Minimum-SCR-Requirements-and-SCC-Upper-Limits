@@ -48,9 +48,11 @@ params.GenCostBreakpoints = 0:0.1:1;
 
 % GFL_WG用于显式记录已建GFL-WG场站参数。
 % PN_MW可以为标量、与GFL_Built_Nodes等长的向量，或全节点向量。
+% Curtailment_Cost_per_MWh为单位弃风惩罚成本，单位为$/MWh。
 params.GFL_WG = struct();
 params.GFL_WG.PN_MW = 60;
 params.GFL_WG.I_Post_Multiplier = 3;
+params.GFL_WG.Curtailment_Cost_per_MWh = 30;
 
 %% 4. GFM-ES规划参数
 % GFM_Candidates:允许投建GFM-ES的节点集合。

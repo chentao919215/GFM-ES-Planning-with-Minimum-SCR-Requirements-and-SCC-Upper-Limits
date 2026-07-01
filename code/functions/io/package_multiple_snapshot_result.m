@@ -1,12 +1,14 @@
 function Result = package_multiple_snapshot_result(SCC_0,SCC_1,P_Line,theta,P_G,P_GFL,P_GFM,...
     SCR,Z_SCC,Z_SCR,u_GFL,u_G,u_G_SCC,u_G_SCR,Cost_CON,Cost_GEN,Cost_Total,...
-    solve_time,CONF,Diagnostics,u_GFM_Mod,P_GFM_Dis,P_GFM_Ch,E_GFM,u_GFM_Ch)
+    solve_time,CONF,Diagnostics,u_GFM_Mod,P_GFM_Dis,P_GFM_Ch,E_GFM,u_GFM_Ch,...
+    P_GFL_Curt,Cost_Curt)
 %% 本函数功能是将多时刻求解输出整理为统一结果结构体。
 
 Cost = struct();
 Cost.Total = Cost_Total;
 Cost.GEN   = Cost_GEN;
 Cost.CON   = Cost_CON;
+Cost.Curt  = Cost_Curt;
 Cost.Unit  = 'annual';
 
 Result = struct();
@@ -16,6 +18,8 @@ Result.P_Line      = P_Line;
 Result.theta       = theta;
 Result.P_G         = P_G;
 Result.P_GFL       = P_GFL;
+% GFL-WG弃风功率按[节点,典型日,时段]保存。
+Result.P_GFL_Curt  = P_GFL_Curt;
 Result.P_GFM       = P_GFM;
 Result.SCR         = SCR;
 Result.Z_SCC       = Z_SCC;

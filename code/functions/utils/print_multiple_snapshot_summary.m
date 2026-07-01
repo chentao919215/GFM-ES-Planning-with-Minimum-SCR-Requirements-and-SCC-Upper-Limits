@@ -6,6 +6,7 @@ fprintf('结果文件：%s\n', result_file);
 fprintf('典型日数量：%d，时段数量：%d。\n', ...
     Result.CONF.TypicalDayCount, Result.CONF.PeriodCount);
 fprintf('总成本：%.6f\n', Result.Cost.Total);
+fprintf('GFL-WG全年弃风成本：%.6f\n', Result.Cost.Curt);
 fprintf('同步机聚合状态 u_G_SCC/u_G_SCR：1 = 投运，0 = 停机。\n');
 disp(Result.u_G_SCC(:)');
 disp(Result.u_G_SCR(:)');

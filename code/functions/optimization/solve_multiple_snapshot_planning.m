@@ -2,7 +2,8 @@ function [SCC_0,SCC_1,value_P_Line,value_theta,value_P_G,value_P_GFL,value_P_GFM
     SCR,Z_SCC_val,Z_SCR_val,value_u_GFL,value_u_G,value_u_G_SCC,value_u_G_SCR,...
     value_Cost_CON,value_Cost_GEN,value_Cost_Total,Diagnostics,...
     value_u_GFM_Mod,value_P_GFM_Dis,value_P_GFM_Ch,value_E_GFM,...
-    value_u_GFM_Ch] = solve_multiple_snapshot_planning(mpc,CONF)
+    value_u_GFM_Ch,value_P_GFL_Curt,value_Cost_Curt] = ...
+    solve_multiple_snapshot_planning(mpc,CONF)
 %% 构建并求解确定性多时刻模块化GFM-ES配置优化模型
 % GFL-WG接入状态与逐时可用出力由参数文件给定；GFM-ES以模块为规划对象。
 % 本函数负责建立多时刻DCOPF、GFM-ES能量循环、聚合安全工况、阻抗重构、
@@ -91,6 +92,8 @@ u_SG_SCR = binvar(G,1,'full');
 % 连续运行变量:各类电源出力、节点相角和线路潮流。
 P_SG      = sdpvar(G,D,T,'full');
 P_GFL     = sdpvar(N,D,T,'full');
+% GFL-WG逐时弃风功率与实际出力、可用出力采用相同的节点-典型日-时段索引。
+P_GFL_curt = sdpvar(N,D,T,'full');
 P_GFM_dis = sdpvar(N_GFM,D,T,'full');
 P_GFM_ch  = sdpvar(N_GFM,D,T,'full');
 E_GFM     = sdpvar(N_GFM,D,T,'full');
@@ -165,6 +168,7 @@ for d = 1:D
         u_SG_dt = u_SG(:,d,t);
         P_SG_dt = P_SG(:,d,t);
         P_GFL_dt = P_GFL(:,d,t);
+        P_GFL_curt_dt = P_GFL_curt(:,d,t);
         P_GFM_dis_dt = P_GFM_dis(:,d,t);
         P_GFM_ch_dt = P_GFM_ch(:,d,t);
         E_GFM_dt = E_GFM(:,d,t);
@@ -200,9 +204,12 @@ for d = 1:D
             P_SG_Norm_dt == Gen_Prange_Inv*(P_SG_dt-Gen_Pmin.*u_SG_dt), ...
             P_SG_Norm_dt >= 0, P_SG_Norm_dt <= u_SG_dt];
 
-        % GFL-WG逐时出力不超过参数文件给定的可用出力。
-        C_operation = [C_operation, P_GFL_dt >= 0, ...
-            P_GFL_dt <= P_GFL_Max(:,d,t).*u_GFL];
+        % 按式(1.25)建立实际出力、可用出力与弃风功率的平衡关系。
+        % 按式(1.26)限制弃风功率，并利用已建状态将非GFL-WG节点固定为零。
+        P_GFL_available_dt = P_GFL_Max(:,d,t).*u_GFL;
+        C_operation = [C_operation, ...
+            P_GFL_dt == P_GFL_available_dt-P_GFL_curt_dt, ...
+            P_GFL_curt_dt >= 0, P_GFL_curt_dt <= P_GFL_available_dt];
 
         % 充电功率和放电功率均不超过已投建模块的聚合额定功率。
         % 第二组上界利用充放电状态避免同一时刻同时充电和放电。
@@ -298,6 +305,7 @@ Gen_Cost_Const_Norm = Gen_Cost_Quad.*(Gen_Pmin.^2) + ...
 
 C_cost = [];
 Cost_GEN = 0;
+Cost_Curt = 0;
 for d = 1:D
     for t = 1:T
         C_cost = [C_cost, Cost_SG(:,d,t) >= 0];
@@ -312,6 +320,10 @@ for d = 1:D
 
         % 按典型日代表天数和时段持续小时数折算同步机全年运行成本。
         Cost_GEN = Cost_GEN + CONF.OperatingWeights_Hours(d,t)*sum(Cost_SG(:,d,t));
+
+        % 按式(1.1)采用相同运行权重折算GFL-WG全年弃风成本。
+        Cost_Curt = Cost_Curt + CONF.OperatingWeights_Hours(d,t)* ...
+            CONF.GFL_Curtailment_Cost_per_MWh*sum(P_GFL_curt(:,d,t));
     end
 end
 
@@ -321,7 +333,7 @@ C = [C_plan, C_operation, C_aggregate, C_impedance_SCC, ...
 
 % GFM-ES年化投建成本由单位功率成本和单位能量成本预先汇总到模块级。
 Cost_GFM_Inv = GFM_Module_Cost_Conv'*u_GFM_mod_table;
-Cost_Total_Annual = Cost_GEN + Cost_GFM_Inv;
+Cost_Total_Annual = Cost_GEN + Cost_GFM_Inv + Cost_Curt;
 Objective = Cost_Total_Annual/CONF.ObjectiveScale;
 
 %% 6. 调用求解器
@@ -358,9 +370,11 @@ end
 value_Cost_Total = value(Cost_Total_Annual);
 value_Cost_GEN = value(Cost_GEN);
 value_Cost_CON = value(Cost_GFM_Inv);
+value_Cost_Curt = value(Cost_Curt);
 
 % 逐时结果保持[元件,典型日,时段]三维索引结构。
 value_P_GFL = value(P_GFL);
+value_P_GFL_Curt = value(P_GFL_curt);
 value_P_GFM_Dis = value(P_GFM_dis);
 value_P_GFM_Ch = value(P_GFM_ch);
 value_E_GFM = value(E_GFM);

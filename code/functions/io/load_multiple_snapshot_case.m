@@ -37,6 +37,8 @@ CONF.u_GFL = zeros(CONF.Bn,1);
 CONF.u_GFL(GFL_built_nodes) = 1;
 
 GFL_params = params.GFL_WG;
+% 单位弃风惩罚成本用于将逐时弃风功率折算为全年弃风成本。
+CONF.GFL_Curtailment_Cost_per_MWh = GFL_params.Curtailment_Cost_per_MWh;
 CONF.PN_GFL_Node = expand_built_node_parameter( ...
     GFL_params.PN_MW, GFL_built_nodes, CONF.Bn);
 CONF.PN_GFL = max(CONF.PN_GFL_Node(CONF.u_GFL > 0.5));

@@ -2301,7 +2301,8 @@
   ],
   "GFL_WG": {
     "PN_MW": 60,
-    "I_Post_Multiplier": 3
+    "I_Post_Multiplier": 3,
+    "Curtailment_Cost_per_MWh": 30
   },
   "GFM_Candidates": [
     9,
