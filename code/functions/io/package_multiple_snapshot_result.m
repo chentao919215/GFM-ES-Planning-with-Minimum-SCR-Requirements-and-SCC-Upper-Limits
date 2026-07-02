@@ -23,6 +23,7 @@ Result.P_GFL       = P_GFL;
 Result.P_GFL_Curt  = P_GFL_Curt;
 Result.P_GFM       = P_GFM;
 Result.SCR         = SCR;
+% Z_SCC按统一安全网络保留节点排列，Z_SCR的列仅对应已建GFL-WG节点。
 Result.Z_SCC       = Z_SCC;
 Result.Z_SCR       = Z_SCR;
 Result.u_GFL       = u_GFL;
@@ -42,5 +43,15 @@ Result.Cost        = Cost;
 Result.solve_time  = solve_time;
 Result.CONF        = CONF;
 Result.Diagnostics = Diagnostics;
+
+% 显式保存原节点与降阶节点映射，便于解释两类阻抗结果的行、列索引。
+SafetyNetwork = struct();
+SafetyNetwork.RetainedOriginalNodes = CONF.Safety_Retained_Nodes(:);
+SafetyNetwork.OriginalToReduced = CONF.Safety_Original_To_Reduced(:);
+SafetyNetwork.SCCColumnOriginalNodes = CONF.Safety_Retained_Nodes(:);
+SafetyNetwork.SCRColumnOriginalNodes = CONF.Safety_GFL_Original_Nodes(:);
+SafetyNetwork.SCRColumnReducedIndices = ...
+    CONF.Safety_GFL_Reduced_Indices(:);
+Result.SafetyNetwork = SafetyNetwork;
 
 end

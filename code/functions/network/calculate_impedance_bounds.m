@@ -4,6 +4,12 @@ function Z_bounds = calculate_impedance_bounds(NET, CONF)
 % 同步机组合始终纳入全停状态；无电压源状态由Require_Source_Online剔除。
 % GFM-ES组合枚举满足模块投建规则的全部状态。
 
+% 多时刻ver_2.5模型分别预处理SCC完整降阶阻抗矩阵与SCR的GFL-WG阻抗列。
+if isfield(NET,'Y0_Safety')
+    Z_bounds = local_calculate_safety_bounds(NET,CONF);
+    return;
+end
+
 %% 1. 生成离散投运组合
 N = NET.N;
 G = NET.G;
@@ -71,6 +77,102 @@ Z_bounds.real_min = real_lower;
 Z_bounds.real_max = real_upper;
 Z_bounds.imag_min = imag_lower;
 Z_bounds.imag_max = imag_upper;
+
+end
+
+function Z_bounds = local_calculate_safety_bounds(NET,CONF)
+%% 分别计算SCC完整降阶阻抗矩阵与SCR所需阻抗列的逐元素上下界。
+
+NS = NET.Safety_N;
+G = NET.G;
+gfl_column_indices = NET.Safety_GFL_Reduced_Indices(:);
+NGFL = numel(gfl_column_indices);
+
+sg_cases = local_build_sg_cases(G);
+gfm_cases = local_build_gfm_module_cases(CONF);
+scc_extrema = local_initialize_extrema(NS,NS);
+scr_extrema = local_initialize_extrema(NS,NGFL);
+valid_case_count = 0;
+
+Y_sg_unit = 1/(1i*CONF.Xd_Gen);
+Y_gfm_mod = 1./(1i*CONF.GFM_Module_X_res(:));
+I_SCC = eye(NS);
+I_SCR = sparse(gfl_column_indices,(1:NGFL).',1,NS,NGFL);
+
+for sg_idx = 1:size(sg_cases,1)
+    sg_status = sg_cases(sg_idx,:).';
+    Y_sg_diag = (NET.Safety_Gen_Loc_Mat*sg_status)*Y_sg_unit;
+
+    for gfm_idx = 1:size(gfm_cases,1)
+        gfm_status = gfm_cases(gfm_idx,:).';
+        if CONF.Require_Source_Online && ~any(sg_status) && ~any(gfm_status)
+            continue;
+        end
+
+        Y_gfm_diag = NET.Safety_GFM_Module_Loc_Mat* ...
+            (gfm_status.*Y_gfm_mod);
+        Y_case = NET.Y0_Safety + spdiags( ...
+            Y_sg_diag+Y_gfm_diag,0,NS,NS);
+        Y_case_full = full(Y_case);
+        if rcond(Y_case_full) < 1e-10
+            continue;
+        end
+
+        valid_case_count = valid_case_count+1;
+        % SCC工况需要完整阻抗矩阵；SCR工况仅求解GFL-WG节点对应的列。
+        Z_SCC_case = Y_case_full\I_SCC;
+        Z_SCR_case = Y_case_full\full(I_SCR);
+        scc_extrema = local_update_extrema( ...
+            scc_extrema,CONF.KZ*Z_SCC_case);
+        scr_extrema = local_update_extrema( ...
+            scr_extrema,CONF.KZ*Z_SCR_case);
+    end
+end
+
+if valid_case_count == 0
+    error('未找到Kron降阶导纳矩阵可逆的设备接入状态。');
+end
+
+Z_bounds = struct();
+Z_bounds.SCC = local_finalize_extrema(scc_extrema,CONF.ZBoundMargin);
+Z_bounds.SCR = local_finalize_extrema(scr_extrema,CONF.ZBoundMargin);
+Z_bounds.SCC.column_reduced_indices = (1:NS).';
+Z_bounds.SCR.column_reduced_indices = gfl_column_indices;
+Z_bounds.valid_case_count = valid_case_count;
+
+end
+
+function extrema = local_initialize_extrema(n_rows,n_columns)
+%% 初始化阻抗列实部、虚部极值。
+
+extrema.real_min = inf(n_rows,n_columns);
+extrema.real_max = -inf(n_rows,n_columns);
+extrema.imag_min = inf(n_rows,n_columns);
+extrema.imag_max = -inf(n_rows,n_columns);
+
+end
+
+function extrema = local_update_extrema(extrema,Z_case)
+%% 使用一个可行设备接入状态更新阻抗列元素极值。
+
+extrema.real_min = min(extrema.real_min,real(Z_case));
+extrema.real_max = max(extrema.real_max,real(Z_case));
+extrema.imag_min = min(extrema.imag_min,imag(Z_case));
+extrema.imag_max = max(extrema.imag_max,imag(Z_case));
+
+end
+
+function bounds = local_finalize_extrema(extrema,margin)
+%% 对枚举得到的阻抗列元素上下界逐元素外扩安全裕度。
+
+real_pad = local_padding(extrema.real_min,extrema.real_max,margin);
+imag_pad = local_padding(extrema.imag_min,extrema.imag_max,margin);
+
+bounds = struct();
+bounds.real_min = extrema.real_min-real_pad;
+bounds.real_max = extrema.real_max+real_pad;
+bounds.imag_min = extrema.imag_min-imag_pad;
+bounds.imag_max = extrema.imag_max+imag_pad;
 
 end
 

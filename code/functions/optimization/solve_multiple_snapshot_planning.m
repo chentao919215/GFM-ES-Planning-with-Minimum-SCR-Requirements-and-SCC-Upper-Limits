@@ -23,9 +23,14 @@ NET = build_multiple_snapshot_network(mpc, CONF);
 N = NET.N;
 G = NET.G;
 L = NET.L;
+NS = NET.Safety_N;
+NGFL = NET.Safety_GFL_Count;
 M_GFM = CONF.GFM_Module_Count;
 N_GFM = CONF.GFM_Candidate_Count;
 N_GFM_Module = CONF.GFM_MaxModulesPerCandidate;
+safety_nodes = NET.Safety_Retained_Nodes;
+gfl_original_nodes = NET.Safety_GFL_Original_Nodes;
+gfl_reduced_indices = NET.Safety_GFL_Reduced_Indices;
 
 % 候选节点检验与模块序号唯一性校验。
 module_bus   = CONF.GFM_Module_Bus(:);
@@ -64,7 +69,7 @@ Line_B_series = NET.Line_B_series;
 Line_Pmax     = NET.Line_Pmax;
 Line_Limited  = NET.Line_Limited;
 P_Load        = NET.P_Load_Profile;
-P_GFL_Max     = NET.P_GFL_Available_Profile;
+P_GFL_Available = NET.P_GFL_Available_Profile;
 
 % GFM-ES模块参数。
 GFM_Module_PN        = CONF.GFM_Module_PN(:);
@@ -113,24 +118,24 @@ P_SG_Norm = sdpvar(G,D,T,'full');
 theta     = sdpvar(N,D,T,'full');
 P_Line    = sdpvar(L,D,T,'full');
 
-% 两个聚合安全工况分别建立节点阻抗矩阵的实部和虚部。
-Z_SCC_real = sdpvar(N,N,'symmetric');
-Z_SCC_imag = sdpvar(N,N,'symmetric');
-Z_SCR_real = sdpvar(N,N,'symmetric');
-Z_SCR_imag = sdpvar(N,N,'symmetric');
+% SCC工况重构完整降阶阻抗矩阵，SCR工况仅重构GFL-WG节点对应的阻抗列。
+Z_SCC_real = sdpvar(NS,NS,'symmetric');
+Z_SCC_imag = sdpvar(NS,NS,'symmetric');
+Z_SCR_real = sdpvar(NS,NGFL,'full');
+Z_SCR_imag = sdpvar(NS,NGFL,'full');
 
 % 最大短路电流水平工况的阻抗重构辅助变量。
-W_SGZ_X_SCC  = sdpvar(G,N,'full');
-W_SGZ_R_SCC  = sdpvar(G,N,'full');
-W_GFMZ_X_SCC = sdpvar(M_GFM,N,'full');
-W_GFMZ_R_SCC = sdpvar(M_GFM,N,'full');
+W_SGZ_X_SCC  = sdpvar(G,NS,'full');
+W_SGZ_R_SCC  = sdpvar(G,NS,'full');
+W_GFMZ_X_SCC = sdpvar(M_GFM,NS,'full');
+W_GFMZ_R_SCC = sdpvar(M_GFM,NS,'full');
 W_GFM_SCC    = sdpvar(M_GFM,1,'full');
 
 % 最弱电压支撑强度工况的阻抗重构辅助变量。
-W_SGZ_X_SCR  = sdpvar(G,N,'full');
-W_SGZ_R_SCR  = sdpvar(G,N,'full');
-W_GFMZ_X_SCR = sdpvar(M_GFM,N,'full');
-W_GFMZ_R_SCR = sdpvar(M_GFM,N,'full');
+W_SGZ_X_SCR  = sdpvar(G,NGFL,'full');
+W_SGZ_R_SCR  = sdpvar(G,NGFL,'full');
+W_GFMZ_X_SCR = sdpvar(M_GFM,NGFL,'full');
+W_GFMZ_R_SCR = sdpvar(M_GFM,NGFL,'full');
 
 % 同步机逐时运行成本辅助变量。
 Cost_SG = sdpvar(G,D,T,'full');
@@ -235,7 +240,7 @@ for d = 1:D
 
         % 按式(1.16)建立实际出力、可用出力与弃风功率的平衡关系。
         % 按式(1.17)限制弃风功率，并利用已建状态将非GFL-WG节点固定为零。
-        P_GFL_available_dt = P_GFL_Max(:,d,t).*u_GFL;
+        P_GFL_available_dt = P_GFL_Available(:,d,t).*u_GFL;
         C_operation = [C_operation, ...
             P_GFL_dt == P_GFL_available_dt-P_GFL_curt_dt, ...
             P_GFL_curt_dt >= 0, P_GFL_curt_dt <= P_GFL_available_dt];
@@ -308,31 +313,43 @@ C_aggregate = [C_aggregate, u_SG_SCC <= u_SG_sum];
 C_aggregate = [C_aggregate, 1-u_SG_SCR <= u_SG_off_sum];
 
 %% 4.4 阻抗矩阵重构约束
-% 分别使用同步机状态并集和交集重构Z_SCC与Z_SCR。
+% 两类工况共用降阶安全网络；SCC构造全部列，SCR仅构造GFL-WG节点列。
 C_impedance_SCC = add_impedance_reconstruction_constraints( ...
-    NET, CONF, Z_bounds, u_SG_SCC, u_GFM_mod_table, ...
+    NET, CONF, Z_bounds.SCC, u_SG_SCC, u_GFM_mod_table, ...
     Z_SCC_real, Z_SCC_imag, W_SGZ_X_SCC, W_SGZ_R_SCC, ...
-    W_GFMZ_X_SCC, W_GFMZ_R_SCC);
+    W_GFMZ_X_SCC, W_GFMZ_R_SCC, (1:NS).');
 
 C_impedance_SCR = add_impedance_reconstruction_constraints( ...
-    NET, CONF, Z_bounds, u_SG_SCR, u_GFM_mod_table, ...
+    NET, CONF, Z_bounds.SCR, u_SG_SCR, u_GFM_mod_table, ...
     Z_SCR_real, Z_SCR_imag, W_SGZ_X_SCR, W_SGZ_R_SCR, ...
-    W_GFMZ_X_SCR, W_GFMZ_R_SCR);
+    W_GFMZ_X_SCR, W_GFMZ_R_SCR, gfl_reduced_indices);
 
 %% 4.5 短路电流水平约束
-% 最大短路电流水平约束仅使用同步机状态并集对应的Z_SCC。
-PN_pu = CONF.PN_GFL_pu_Node;
+% 最大短路电流水平约束作用于全部已建及候选有源设备接入节点。
+% GFL-WG额定功率仅用于安全约束，不与逐时可用出力或实际出力混用。
+PN_GFL_rated_pu_node = CONF.PN_GFL_pu_Node;
+u_GFL_Safety = u_GFL(safety_nodes);
+PN_GFL_rated_pu_safety = PN_GFL_rated_pu_node(safety_nodes);
+CONF_Safety = CONF;
+CONF_Safety.GFM_Module_Loc_Mat = NET.Safety_GFM_Module_Loc_Mat;
+CONF_Safety.I_limit = CONF.I_limit(safety_nodes);
+CONF_Safety.I_post_GFL_Node = CONF.I_post_GFL_Node(safety_nodes);
+CONF_Safety.PN_GFL_pu_Node = PN_GFL_rated_pu_safety;
 X_diag_SCC = diag(Z_SCC_imag);
-X_diag_L = diag(Z_bounds.imag_min);
-X_diag_U = diag(Z_bounds.imag_max);
-C_scc = add_short_circuit_current_constraints(CONF, u_GFL, ...
+X_diag_L = diag(Z_bounds.SCC.imag_min);
+X_diag_U = diag(Z_bounds.SCC.imag_max);
+C_scc = add_short_circuit_current_constraints(CONF_Safety, u_GFL_Safety, ...
     u_GFM_mod_table, W_GFM_SCC, X_diag_SCC, DeltaY_abs_mod, ...
-    PN_pu, X_diag_L, X_diag_U);
+    PN_GFL_rated_pu_safety, X_diag_L, X_diag_U);
 
 %% 4.6 经典短路比约束
-% 最弱电压支撑强度约束仅使用同步机状态交集对应的Z_SCR。
-X_diag_SCR = diag(Z_SCR_imag);
-C_scr = add_classic_scr_constraints(CONF, u_GFL, X_diag_SCR, PN_pu);
+% 从SCR阻抗列提取GFL-WG节点自阻抗，并严格采用场站额定功率。
+scr_diagonal_indices = sub2ind([NS,NGFL], ...
+    gfl_reduced_indices,(1:NGFL).');
+X_diag_SCR = Z_SCR_imag(scr_diagonal_indices);
+PN_GFL_rated_pu = PN_GFL_rated_pu_node(gfl_original_nodes);
+C_scr = add_classic_scr_constraints( ...
+    CONF, ones(NGFL,1), X_diag_SCR, PN_GFL_rated_pu);
 C_scr = [C_scr, sum(u_SG_SCR) + sum(u_GFM_mod_table) >= 1];
 
 %% 5. 构造目标函数
@@ -449,11 +466,22 @@ Z_SCC_val = value(Z_SCC_real)/CONF.KZ + 1i*value(Z_SCC_imag)/CONF.KZ;
 Z_SCR_val = value(Z_SCR_real)/CONF.KZ + 1i*value(Z_SCR_imag)/CONF.KZ;
 
 X_diag_SCR_val = value(X_diag_SCR)/CONF.KZ;
-SCR = calculate_classic_scr(X_diag_SCR_val, u_GFL, PN_pu);
+SCR = zeros(N,1);
+SCR(gfl_original_nodes) = calculate_classic_scr( ...
+    X_diag_SCR_val,ones(NGFL,1),PN_GFL_rated_pu);
 
 %% 8. 计算短路电流指标
-% SCC_1采用聚合短路电流工况Z_SCC，SCC_0保留原始全同步机基准值。
-[SCC_0, SCC_1] = calculate_short_circuit_currents(Z_SCC_val, ...
-    value_u_GFM_Mod(module_linear_idx), u_GFL, CONF, NET.Y0, NET.Y_SG_Add);
+% 安全约束仅作用于保留节点；结果阶段恢复全网阻抗，以维持SCC原节点向量格式。
+value_u_GFM_mod_table = value_u_GFM_Mod(module_linear_idx);
+Y_SG_SCC_Node = (NET.Gen_Loc_Mat*value_u_G_SCC)*(1/(1i*CONF.Xd_Gen));
+Y_GFM_SCC_Node = CONF.GFM_Module_Loc_Mat*(value_u_GFM_mod_table.* ...
+    (1./(1i*CONF.GFM_Module_X_res(:))));
+Y_SCC_Full = NET.Y0+spdiags(Y_SG_SCC_Node+Y_GFM_SCC_Node,0,N,N);
+if rcond(full(Y_SCC_Full)) < 1e-10
+    error('聚合SCC工况的完整节点导纳矩阵不可逆，无法恢复全节点结果。');
+end
+Z_SCC_Full = full(Y_SCC_Full)\eye(N);
+[SCC_0, SCC_1] = calculate_short_circuit_currents( ...
+    Z_SCC_Full,value_u_GFM_mod_table,u_GFL,CONF,NET.Y0,NET.Y_SG_Add);
 
 end

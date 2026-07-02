@@ -65,9 +65,53 @@ NET.Y0 = Y_ff+Y_tt+Y_ft+Y_tf;
 Y_SG_Node    = (NET.Gen_Loc_Mat*ones(G,1)).*(1/(1i*CONF.Xd_Gen));
 NET.Y_SG_Add = sparse(1:N,1:N,Y_SG_Node,N,N);
 
-%% 4. 生成模块化GFM-ES导纳参数
+%% 4. 构造Kron降阶安全网络
+% SCC与SCR工况共用同一保留节点集合和原节点-降阶节点映射。
+safety_nodes = CONF.Safety_Retained_Nodes(:);
+eliminated_nodes = setdiff((1:N).',safety_nodes,'stable');
+NS = numel(safety_nodes);
+
+NET.Safety_Retained_Nodes = safety_nodes;
+NET.Safety_Eliminated_Nodes = eliminated_nodes;
+NET.Safety_Original_To_Reduced = CONF.Safety_Original_To_Reduced(:);
+NET.Safety_N = NS;
+NET.Safety_GFL_Original_Nodes = CONF.Safety_GFL_Original_Nodes(:);
+NET.Safety_GFL_Reduced_Indices = CONF.Safety_GFL_Reduced_Indices(:);
+NET.Safety_GFL_Count = CONF.Safety_GFL_Count;
+
+% 所有状态相关导纳节点均被保留，因此设备状态导纳可在Kron消元后直接叠加。
+NET.Safety_Gen_Loc_Mat = NET.Gen_Loc_Mat(safety_nodes,:);
+NET.Safety_GFM_Module_Loc_Mat = ...
+    CONF.GFM_Module_Loc_Mat(safety_nodes,:);
+NET.Y0_Safety = local_kron_reduce(NET.Y0,safety_nodes,eliminated_nodes);
+
+Y_SG_Node_Safety = (NET.Safety_Gen_Loc_Mat*ones(G,1)).* ...
+    (1/(1i*CONF.Xd_Gen));
+NET.Y_SG_Add_Safety = sparse(1:NS,1:NS,Y_SG_Node_Safety,NS,NS);
+
+%% 5. 生成模块化GFM-ES导纳参数
 NET.B_gfm_mod      = -1./CONF.GFM_Module_X_res(:);
 NET.DeltaY_mod     = CONF.GFM_Module_DeltaY(:);
 NET.DeltaY_abs_mod = abs(NET.DeltaY_mod);
+
+end
+
+function Y_reduced = local_kron_reduce(Y,retained_nodes,eliminated_nodes)
+%% 对基础节点导纳矩阵执行Kron消元。
+
+Y_SS = Y(retained_nodes,retained_nodes);
+if isempty(eliminated_nodes)
+    Y_reduced = Y_SS;
+    return;
+end
+
+Y_SE = Y(retained_nodes,eliminated_nodes);
+Y_ES = Y(eliminated_nodes,retained_nodes);
+Y_EE = full(Y(eliminated_nodes,eliminated_nodes));
+if rcond(Y_EE) < 1e-12
+    error('Kron消元失败：被消元节点对应的基础导纳子矩阵不可逆。');
+end
+
+Y_reduced = sparse(Y_SS-Y_SE*(Y_EE\Y_ES));
 
 end

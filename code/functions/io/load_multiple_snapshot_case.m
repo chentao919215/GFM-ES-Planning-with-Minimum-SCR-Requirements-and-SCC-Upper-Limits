@@ -85,6 +85,17 @@ CONF.GFM_MaxModulesPerCandidate = GFMModules.MaxModulesPerCandidate;
 CONF.GFM_Module_Sequential = GFMModules.EnforceSequentialBuild;
 CONF.GFM_Module_I_Post_Multiplier = GFMModules.I_Post_Multiplier;
 
+% 安全网络统一保留全部同步机、GFM-ES候选节点和已建GFL-WG接入节点。
+% Original_To_Reduced以0表示被Kron消元的原节点，其余值为降阶节点索引。
+[safety_nodes, original_to_reduced] = build_safety_network_mapping( ...
+    mpc.gen(:,1), GFMModules.CandidateBus, GFL_built_nodes, CONF.Bn);
+CONF.Safety_Retained_Nodes = safety_nodes;
+CONF.Safety_Original_To_Reduced = original_to_reduced;
+CONF.Safety_Node_Count = numel(safety_nodes);
+CONF.Safety_GFL_Original_Nodes = GFL_built_nodes;
+CONF.Safety_GFL_Reduced_Indices = original_to_reduced(GFL_built_nodes);
+CONF.Safety_GFL_Count = numel(GFL_built_nodes);
+
 %% 5. 读取短路电流与短路比安全参数
 CONF.I_limit_kA_Node = expand_system_node_parameter(params.I_limit_kA, CONF.Bn);
 
@@ -340,6 +351,25 @@ if isscalar(values)
 else
     node_values = values;
 end
+
+end
+
+function [retained_nodes, original_to_reduced] = ...
+    build_safety_network_mapping(generator_nodes, gfm_nodes, gfl_nodes, n_nodes)
+%% 构造安全网络统一保留节点集合及原节点到降阶节点的映射。
+
+all_nodes = [generator_nodes(:); gfm_nodes(:); gfl_nodes(:)];
+if any(~isfinite(all_nodes)) || any(all_nodes ~= round(all_nodes)) || ...
+        any(all_nodes < 1) || any(all_nodes > n_nodes)
+    error('安全网络有源设备接入节点必须为1至节点总数%d之间的整数。',n_nodes);
+end
+if numel(unique(gfl_nodes(:))) ~= numel(gfl_nodes)
+    error('GFL_Built_Nodes不应包含重复节点。');
+end
+
+retained_nodes = unique(all_nodes,'sorted');
+original_to_reduced = zeros(n_nodes,1);
+original_to_reduced(retained_nodes) = (1:numel(retained_nodes)).';
 
 end
 
