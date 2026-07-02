@@ -1,7 +1,7 @@
 function Result = package_multiple_snapshot_result(SCC_0,SCC_1,P_Line,theta,P_G,P_GFL,P_GFM,...
     SCR,Z_SCC,Z_SCR,u_GFL,u_G,u_G_SCC,u_G_SCR,Cost_CON,Cost_GEN,Cost_Total,...
     solve_time,CONF,Diagnostics,u_GFM_Mod,P_GFM_Dis,P_GFM_Ch,E_GFM,u_GFM_Ch,...
-    P_GFL_Curt,Cost_Curt)
+    P_GFL_Curt,Cost_Curt,u_G_Start,u_G_Stop,Cost_UC)
 %% 本函数功能是将多时刻求解输出整理为统一结果结构体。
 
 Cost = struct();
@@ -9,6 +9,7 @@ Cost.Total = Cost_Total;
 Cost.GEN   = Cost_GEN;
 Cost.CON   = Cost_CON;
 Cost.Curt  = Cost_Curt;
+Cost.UC    = Cost_UC;
 Cost.Unit  = 'annual';
 
 Result = struct();
@@ -26,6 +27,9 @@ Result.Z_SCC       = Z_SCC;
 Result.Z_SCR       = Z_SCR;
 Result.u_GFL       = u_GFL;
 Result.u_G         = u_G;
+% 同步机启动、停机动作按[机组,典型日,时段]保存。
+Result.u_G_Start   = u_G_Start;
+Result.u_G_Stop    = u_G_Stop;
 Result.u_G_SCC     = u_G_SCC;
 Result.u_G_SCR     = u_G_SCR;
 Result.u_GFM_Mod   = u_GFM_Mod;

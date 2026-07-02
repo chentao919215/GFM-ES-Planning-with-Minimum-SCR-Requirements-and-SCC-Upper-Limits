@@ -27,14 +27,7 @@ for k = 1:numel(files)
     end
 
     Result = loaded.Result;
-    CONF.MIPStart = struct();
-    CONF.MIPStart.u_G = reshape(round(Result.u_G), ...
-        CONF.Gn, CONF.TypicalDayCount, CONF.PeriodCount);
-    CONF.MIPStart.u_G_SCC = round(Result.u_G_SCC(:));
-    CONF.MIPStart.u_G_SCR = round(Result.u_G_SCR(:));
-    CONF.MIPStart.u_GFM_Mod = round(Result.u_GFM_Mod);
-    CONF.MIPStart.u_GFM_Ch = reshape(round(Result.u_GFM_Ch), ...
-        CONF.GFM_Candidate_Count, CONF.TypicalDayCount, CONF.PeriodCount);
+    CONF.MIPStart = build_multiple_snapshot_mip_start_from_result(Result, CONF);
     CONF.MIPStart.SourceFile = result_file;
 
     Info.used = true;

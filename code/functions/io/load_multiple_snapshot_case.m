@@ -125,7 +125,25 @@ CONF.P_GFL_Available_Profile = reshape(multi.GFL_Available_P_MW, CONF.Bn, D, T);
 % 同步机最小出力显式由多时刻参数文件给定。
 CONF.Gen_Pmin = params.Gen_Pmin_MW(:);
 
-%% 8. 计算文档口径下的GFM-ES模块年化投建成本
+%% 8. 读取同步机UC参数
+% 爬坡速率单位为MW/h；最小开停机时间采用时段数表示。
+UC = params.UC;
+CONF.Gen_Ramp_Up_MW_per_Hour = expand_generator_parameter( ...
+    UC.RampUp_Rate_MW_per_Hour, CONF.Gn, 'RampUp_Rate_MW_per_Hour');
+CONF.Gen_Ramp_Down_MW_per_Hour = expand_generator_parameter( ...
+    UC.RampDown_Rate_MW_per_Hour, CONF.Gn, 'RampDown_Rate_MW_per_Hour');
+CONF.Gen_Min_Up_Periods = expand_generator_parameter( ...
+    UC.MinUp_Periods, CONF.Gn, 'MinUp_Periods');
+CONF.Gen_Min_Down_Periods = expand_generator_parameter( ...
+    UC.MinDown_Periods, CONF.Gn, 'MinDown_Periods');
+CONF.Gen_Startup_Cost = expand_generator_parameter( ...
+    UC.Startup_Cost, CONF.Gn, 'Startup_Cost');
+CONF.Gen_Shutdown_Cost = expand_generator_parameter( ...
+    UC.Shutdown_Cost, CONF.Gn, 'Shutdown_Cost');
+
+validate_uc_parameters(CONF, T);
+
+%% 9. 计算文档口径下的GFM-ES模块年化投建成本
 power_cost   = GFMModules.Annual_Cost_Power_per_MW;
 energy_cost  = GFMModules.Annual_Cost_Energy_per_MWh;
 rated_energy = GFMModules.Rated_Energy_MWh;
@@ -135,12 +153,45 @@ CONF.GFM_Module_Annual_Cost_Energy = energy_cost.*rated_energy;
 CONF.GFM_Module_Rated_Energy = rated_energy;
 CONF.GFM_Module_Cost_Conv    = CONF.GFM_Module_Annual_Cost_Power+CONF.GFM_Module_Annual_Cost_Energy;
 
-%% 9. 整理算例路径
+%% 10. 整理算例路径
 paths = struct();
 paths.project_root = project_root;
 paths.param_file = param_file;
 paths.results_dir = fullfile(project_root,'results');
 ensure_directory(paths.results_dir);
+
+end
+
+function values = expand_generator_parameter(values, n_generators, field_name)
+%% 将同步机UC参数扩展为与同步机数量一致的列向量。
+
+values = values(:);
+if isscalar(values)
+    values = repmat(values,n_generators,1);
+elseif numel(values) ~= n_generators
+    error('UC.%s的长度应为1或同步机数量%d。',field_name,n_generators);
+end
+
+end
+
+function validate_uc_parameters(CONF, period_count)
+%% 校验同步机UC参数是否满足文档模型的取值范围。
+
+ramp_values = [CONF.Gen_Ramp_Up_MW_per_Hour; ...
+    CONF.Gen_Ramp_Down_MW_per_Hour];
+cost_values = [CONF.Gen_Startup_Cost; CONF.Gen_Shutdown_Cost];
+min_periods = [CONF.Gen_Min_Up_Periods; CONF.Gen_Min_Down_Periods];
+
+if any(~isfinite(ramp_values)) || any(ramp_values < 0)
+    error('同步机上、下爬坡速率必须为有限非负数。');
+end
+if any(~isfinite(cost_values)) || any(cost_values < 0)
+    error('同步机单次启动、停机成本必须为有限非负数。');
+end
+if any(~isfinite(min_periods)) || any(min_periods ~= round(min_periods)) || ...
+        any(min_periods < 1) || any(min_periods > period_count)
+    error('同步机最小开、停机时段数必须为1至PeriodCount之间的整数。');
+end
 
 end
 

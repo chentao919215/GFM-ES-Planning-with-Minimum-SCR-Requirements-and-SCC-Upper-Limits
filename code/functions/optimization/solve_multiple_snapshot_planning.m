@@ -2,12 +2,13 @@ function [SCC_0,SCC_1,value_P_Line,value_theta,value_P_G,value_P_GFL,value_P_GFM
     SCR,Z_SCC_val,Z_SCR_val,value_u_GFL,value_u_G,value_u_G_SCC,value_u_G_SCR,...
     value_Cost_CON,value_Cost_GEN,value_Cost_Total,Diagnostics,...
     value_u_GFM_Mod,value_P_GFM_Dis,value_P_GFM_Ch,value_E_GFM,...
-    value_u_GFM_Ch,value_P_GFL_Curt,value_Cost_Curt] = ...
+    value_u_GFM_Ch,value_P_GFL_Curt,value_Cost_Curt,...
+    value_u_G_Start,value_u_G_Stop,value_Cost_UC] = ...
     solve_multiple_snapshot_planning(mpc,CONF)
 %% 构建并求解确定性多时刻模块化GFM-ES配置优化模型
 % GFL-WG接入状态与逐时可用出力由参数文件给定；GFM-ES以模块为规划对象。
-% 本函数负责建立多时刻DCOPF、GFM-ES能量循环、聚合安全工况、阻抗重构、
-% 安全约束和成本目标。
+% 本函数负责建立多时刻DCOPF、同步机UC、GFM-ES能量循环、聚合安全工况、
+% 阻抗重构、安全约束和成本目标。
 
 %% 1. 整理输入参数
 % u_GFL为已建GFL-WG节点状态，不作为优化变量。
@@ -50,6 +51,14 @@ Gen_Cost_Const = NET.Gen_Cost_Const;
 Gen_Pmax = NET.Gen_Pmax;
 Gen_Pmin = NET.Gen_Pmin;
 
+% 同步机UC参数：正常爬坡速率、最小开停机时段数和单次启停成本。
+Gen_Ramp_Up = CONF.Gen_Ramp_Up_MW_per_Hour(:);
+Gen_Ramp_Down = CONF.Gen_Ramp_Down_MW_per_Hour(:);
+Gen_Min_Up = CONF.Gen_Min_Up_Periods(:);
+Gen_Min_Down = CONF.Gen_Min_Down_Periods(:);
+Gen_Startup_Cost = CONF.Gen_Startup_Cost(:);
+Gen_Shutdown_Cost = CONF.Gen_Shutdown_Cost(:);
+
 % 线路、负荷与GFL-WG逐时参数。
 Line_B_series = NET.Line_B_series;
 Line_Pmax     = NET.Line_Pmax;
@@ -74,8 +83,10 @@ GFM_SOC_Min              = CONF.GFM_Candidate_SOC_Min(:);
 Z_bounds = calculate_impedance_bounds(NET, CONF);
 
 %% 3. 定义优化变量
-% 逐时二进制变量:同步机在各典型日、各时段的启停状态。
+% 逐时二进制变量：同步机运行状态以及启动、停机动作。
 u_SG = binvar(G,D,T,'full');
+u_SG_start = binvar(G,D,T,'full');
+u_SG_stop = binvar(G,D,T,'full');
 
 % 跨典型日和时段共享的GFM-ES模块投建状态。
 u_GFM_mod       = binvar(N_GFM,N_GFM_Module,'full');
@@ -204,8 +215,26 @@ for d = 1:D
             P_SG_Norm_dt == Gen_Prange_Inv*(P_SG_dt-Gen_Pmin.*u_SG_dt), ...
             P_SG_Norm_dt >= 0, P_SG_Norm_dt <= u_SG_dt];
 
-        % 按式(1.25)建立实际出力、可用出力与弃风功率的平衡关系。
-        % 按式(1.26)限制弃风功率，并利用已建状态将非GFL-WG节点固定为零。
+        % 典型日内同步机状态、爬坡过程均按日首与日末循环衔接。
+        % 启动与停机动作互斥，并由相邻时段运行状态的变化唯一确定。
+        previous_t = mod(t-2,T)+1;
+        u_SG_prev = u_SG(:,d,previous_t);
+        P_SG_prev = P_SG(:,d,previous_t);
+        u_SG_start_dt = u_SG_start(:,d,t);
+        u_SG_stop_dt = u_SG_stop(:,d,t);
+        delta_t = CONF.PeriodDurations_Hours(t);
+        Gen_Startup_Power = min(Gen_Pmax, Gen_Pmin+Gen_Ramp_Up*delta_t);
+        Gen_Shutdown_Power = min(Gen_Pmax, Gen_Pmin+Gen_Ramp_Down*delta_t);
+        C_operation = [C_operation, ...
+            u_SG_start_dt+u_SG_stop_dt <= 1, ...
+            u_SG_dt-u_SG_prev == u_SG_start_dt-u_SG_stop_dt, ...
+            P_SG_dt-P_SG_prev <= Gen_Ramp_Up*delta_t.*u_SG_prev + ...
+                Gen_Startup_Power.*u_SG_start_dt, ...
+            P_SG_prev-P_SG_dt <= Gen_Ramp_Down*delta_t.*u_SG_dt + ...
+                Gen_Shutdown_Power.*u_SG_stop_dt];
+
+        % 按式(1.16)建立实际出力、可用出力与弃风功率的平衡关系。
+        % 按式(1.17)限制弃风功率，并利用已建状态将非GFL-WG节点固定为零。
         P_GFL_available_dt = P_GFL_Max(:,d,t).*u_GFL;
         C_operation = [C_operation, ...
             P_GFL_dt == P_GFL_available_dt-P_GFL_curt_dt, ...
@@ -221,7 +250,6 @@ for d = 1:D
             P_GFM_dis_dt <= P_GFM_Candidate_Upper.*(1-u_GFM_ch_dt)];
 
         % 储能量按时段持续小时数递推；首时段从给定初始SOC对应的能量开始。
-        delta_t = CONF.PeriodDurations_Hours(t);
         if t == 1
             E_GFM_prev = E_GFM_Initial;
         else
@@ -240,6 +268,17 @@ for d = 1:D
         if CONF.Require_Source_Online
             C_operation = [C_operation, ...
                 sum(u_SG_dt) + sum(u_GFM_mod_table) >= 1];
+        end
+    end
+
+    % 最小开、停机约束采用循环滑动窗口，与典型日日首日末状态衔接一致。
+    for g = 1:G
+        for t = 1:T
+            up_window = mod((t-Gen_Min_Up(g)+1:t)-1,T)+1;
+            down_window = mod((t-Gen_Min_Down(g)+1:t)-1,T)+1;
+            C_operation = [C_operation, ...
+                sum(reshape(u_SG_start(g,d,up_window),[],1)) <= u_SG(g,d,t), ...
+                sum(reshape(u_SG_stop(g,d,down_window),[],1)) <= 1-u_SG(g,d,t)]; %#ok<AGROW>
         end
     end
 
@@ -306,6 +345,7 @@ Gen_Cost_Const_Norm = Gen_Cost_Quad.*(Gen_Pmin.^2) + ...
 C_cost = [];
 Cost_GEN = 0;
 Cost_Curt = 0;
+Cost_UC = 0;
 for d = 1:D
     for t = 1:T
         C_cost = [C_cost, Cost_SG(:,d,t) >= 0];
@@ -324,6 +364,11 @@ for d = 1:D
         % 按式(1.1)采用相同运行权重折算GFL-WG全年弃风成本。
         Cost_Curt = Cost_Curt + CONF.OperatingWeights_Hours(d,t)* ...
             CONF.GFL_Curtailment_Cost_per_MWh*sum(P_GFL_curt(:,d,t));
+
+        % 启停成本按典型日代表天数折算，不再乘以时段持续小时数。
+        Cost_UC = Cost_UC + CONF.TypicalDayWeights_Days(d)*( ...
+            Gen_Startup_Cost'*u_SG_start(:,d,t) + ...
+            Gen_Shutdown_Cost'*u_SG_stop(:,d,t));
     end
 end
 
@@ -333,7 +378,7 @@ C = [C_plan, C_operation, C_aggregate, C_impedance_SCC, ...
 
 % GFM-ES年化投建成本由单位功率成本和单位能量成本预先汇总到模块级。
 Cost_GFM_Inv = GFM_Module_Cost_Conv'*u_GFM_mod_table;
-Cost_Total_Annual = Cost_GEN + Cost_GFM_Inv + Cost_Curt;
+Cost_Total_Annual = Cost_GEN + Cost_GFM_Inv + Cost_Curt + Cost_UC;
 Objective = Cost_Total_Annual/CONF.ObjectiveScale;
 
 %% 6. 调用求解器
@@ -341,6 +386,12 @@ Objective = Cost_Total_Annual/CONF.ObjectiveScale;
 ops = build_gurobi_options(CONF.Solver);
 if isfield(CONF, 'MIPStart')
     assign(u_SG, CONF.MIPStart.u_G);
+    if isfield(CONF.MIPStart, 'u_G_Start')
+        assign(u_SG_start, CONF.MIPStart.u_G_Start);
+    end
+    if isfield(CONF.MIPStart, 'u_G_Stop')
+        assign(u_SG_stop, CONF.MIPStart.u_G_Stop);
+    end
     assign(u_SG_SCC, CONF.MIPStart.u_G_SCC);
     assign(u_SG_SCR, CONF.MIPStart.u_G_SCR);
     assign(u_GFM_mod, CONF.MIPStart.u_GFM_Mod);
@@ -371,6 +422,7 @@ value_Cost_Total = value(Cost_Total_Annual);
 value_Cost_GEN = value(Cost_GEN);
 value_Cost_CON = value(Cost_GFM_Inv);
 value_Cost_Curt = value(Cost_Curt);
+value_Cost_UC = value(Cost_UC);
 
 % 逐时结果保持[元件,典型日,时段]三维索引结构。
 value_P_GFL = value(P_GFL);
@@ -383,6 +435,8 @@ value_P_G = value(P_SG);
 value_theta = value(theta);
 value_P_Line = value(P_Line);
 value_u_G = value(u_SG);
+value_u_G_Start = value(u_SG_start);
+value_u_G_Stop = value(u_SG_stop);
 
 value_u_GFL = u_GFL;
 value_u_G_SCC = value(u_SG_SCC);
