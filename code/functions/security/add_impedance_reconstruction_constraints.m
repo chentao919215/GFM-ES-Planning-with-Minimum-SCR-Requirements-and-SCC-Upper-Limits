@@ -1,7 +1,7 @@
 function C_imp = add_impedance_reconstruction_constraints( ...
     NET, CONF, Z_bounds, u_SG_state, u_GFM_mod, Z_real, Z_imag, ...
     W_SGZ_X, W_SGZ_R, W_GFMZ_X, W_GFMZ_R, column_indices)
-%% 本函数功能是建立一个聚合安全工况的降阶阻抗列重构约束。
+%% 本函数功能是建立一个典型日聚合安全工况的降阶阻抗列重构约束。
 
 N_row = size(Z_real,1);
 N_col = size(Z_real,2);
@@ -18,6 +18,9 @@ end
 if N_row ~= NET.Safety_N || numel(column_indices) ~= N_col || ...
         any(column_indices < 1) || any(column_indices > N_row)
     error('降阶阻抗列维度或列节点索引与安全网络不一致。');
+end
+if numel(u_SG_state) ~= NET.G || numel(u_GFM_mod) ~= M_GFM
+    error('典型日聚合安全状态或GFM-ES模块状态维度不一致。');
 end
 
 % 同步机支路贡献:W_SGZ_*=u_SG_state.*Z(同步机接入节点,:)。

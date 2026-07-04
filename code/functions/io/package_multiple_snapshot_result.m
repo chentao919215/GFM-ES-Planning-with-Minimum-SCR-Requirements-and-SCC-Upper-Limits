@@ -2,7 +2,7 @@ function Result = package_multiple_snapshot_result(SCC_0,SCC_1,P_Line,theta,P_G,
     SCR,Z_SCC,Z_SCR,u_GFL,u_G,u_G_SCC,u_G_SCR,Cost_CON,Cost_GEN,Cost_Total,...
     solve_time,CONF,Diagnostics,u_GFM_Mod,P_GFM_Dis,P_GFM_Ch,E_GFM,u_GFM_Ch,...
     P_GFL_Curt,Cost_Curt,u_G_Start,u_G_Stop,Cost_UC)
-%% 本函数功能是将多时刻求解输出整理为统一结果结构体。
+%% 本函数功能是将多时段求解输出整理为统一结果结构体。
 
 Cost = struct();
 Cost.Total = Cost_Total;
@@ -19,22 +19,24 @@ Result.P_Line      = P_Line;
 Result.theta       = theta;
 Result.P_G         = P_G;
 Result.P_GFL       = P_GFL;
-% GFL-WG弃风功率按[节点,典型日,时段]保存。
+% GFL-WG场景可用出力、实际出力和弃风功率严格分开保存。
+Result.P_GFL_Available = CONF.P_GFL_Available_Scenarios;
 Result.P_GFL_Curt  = P_GFL_Curt;
 Result.P_GFM       = P_GFM;
 Result.SCR         = SCR;
-% Z_SCC按统一安全网络保留节点排列，Z_SCR的列仅对应已建GFL-WG节点。
+% SCC、SCR和两类阻抗均以典型日为末维；Z_SCR的列仅对应已建GFL-WG节点。
 Result.Z_SCC       = Z_SCC;
 Result.Z_SCR       = Z_SCR;
 Result.u_GFL       = u_GFL;
 Result.u_G         = u_G;
-% 同步机启动、停机动作按[机组,典型日,时段]保存。
+% 同步机状态及启停动作按[机组,典型日,时段]保存并跨场景共享。
 Result.u_G_Start   = u_G_Start;
 Result.u_G_Stop    = u_G_Stop;
 Result.u_G_SCC     = u_G_SCC;
 Result.u_G_SCR     = u_G_SCR;
 Result.u_GFM_Mod   = u_GFM_Mod;
-% 储能运行结果按[候选节点,典型日,时段]保存，P_GFM为全节点净注入功率。
+% 场景相关储能运行结果按[候选节点,典型日,场景,时段]保存，
+% P_GFM为[节点,典型日,场景,时段]全节点净注入功率。
 Result.P_GFM_Dis   = P_GFM_Dis;
 Result.P_GFM_Ch    = P_GFM_Ch;
 Result.E_GFM       = E_GFM;
@@ -44,14 +46,47 @@ Result.solve_time  = solve_time;
 Result.CONF        = CONF;
 Result.Diagnostics = Diagnostics;
 
+% 保存场景轴含义和概率，避免下游输出将场景维误认为时段维。
+WindScenarios = struct();
+WindScenarios.Count = CONF.WindScenarioCount;
+WindScenarios.Names = CONF.WindScenarioNames;
+WindScenarios.Probabilities = CONF.WindScenarioProbabilities;
+WindScenarios.ScaleFactors = CONF.WindScenarioScaleFactors;
+WindScenarios.GenerationMode = CONF.WindScenarioGenerationMode;
+WindScenarios.BaseScenarioIndex = CONF.WindScenarioBaseIndex;
+WindScenarios.AvailablePowerDimensions = ...
+    {'node','typical_day','wind_scenario','period'};
+Result.WindScenarios = WindScenarios;
+
+Dimensions = struct();
+Dimensions.SharedUC = {'generator','typical_day','period'};
+Dimensions.ScenarioGeneratorDispatch = ...
+    {'generator','typical_day','wind_scenario','period'};
+Dimensions.ScenarioNodeOperation = ...
+    {'node','typical_day','wind_scenario','period'};
+Dimensions.ScenarioGFMOperation = ...
+    {'gfm_candidate','typical_day','wind_scenario','period'};
+Dimensions.SafetyState = {'generator','typical_day'};
+Result.Dimensions = Dimensions;
+
 % 显式保存原节点与降阶节点映射，便于解释两类阻抗结果的行、列索引。
 SafetyNetwork = struct();
 SafetyNetwork.RetainedOriginalNodes = CONF.Safety_Retained_Nodes(:);
 SafetyNetwork.OriginalToReduced = CONF.Safety_Original_To_Reduced(:);
 SafetyNetwork.SCCColumnOriginalNodes = CONF.Safety_Retained_Nodes(:);
+SafetyNetwork.SCCConstraintOriginalNodes = ...
+    CONF.SCC_Constraint_Original_Nodes(:);
 SafetyNetwork.SCRColumnOriginalNodes = CONF.Safety_GFL_Original_Nodes(:);
 SafetyNetwork.SCRColumnReducedIndices = ...
     CONF.Safety_GFL_Reduced_Indices(:);
+SafetyNetwork.TypicalDayCount = CONF.TypicalDayCount;
+SafetyNetwork.AggregationScope = 'within_each_typical_day';
+SafetyNetwork.SCCStateDimensions = {'generator','typical_day'};
+SafetyNetwork.SCRStateDimensions = {'generator','typical_day'};
+SafetyNetwork.SCCImpedanceDimensions = ...
+    {'retained_node','retained_node','typical_day'};
+SafetyNetwork.SCRImpedanceDimensions = ...
+    {'retained_node','gfl_column','typical_day'};
 Result.SafetyNetwork = SafetyNetwork;
 
 end

@@ -1,0 +1,16 @@
+Check,Value,AbsoluteValue,Tolerance,Unit,Passed
+cost_decomposition_error,1.11758708953857e-08,1.11758708953857e-08,9.35175180972982,absolute annual cost,1
+cost_objective_error,-3.72529029846191e-09,3.72529029846191e-09,9.35175180972982,absolute annual cost,1
+D01_power_balance_max_abs,5.6843418860808e-14,5.6843418860808e-14,2.27039579555556e-05,MW,1
+D01_SOC_cycle_max_abs,0,0,1e-05,MWh,1
+D02_power_balance_max_abs,9.59232693276135e-14,9.59232693276135e-14,2.043356216e-05,MW,1
+D02_SOC_cycle_max_abs,0,0,1e-05,MWh,1
+D03_power_balance_max_abs,1.03028696685215e-13,1.03028696685215e-13,2.27039579555556e-05,MW,1
+D03_SOC_cycle_max_abs,0,0,1e-05,MWh,1
+D01_max_line_overload,0,0,1e-05,percentage points,1
+D02_max_line_overload,0,0,1e-05,percentage points,1
+D03_max_line_overload,0,0,1e-05,percentage points,1
+SCC_max_posthoc_relative_error,0.000446459880423832,0.000446459880423832,0.1,percent,1
+classic_SCR_max_posthoc_relative_error,0.000159353727528121,0.000159353727528121,0.1,percent,1
+minimum_SCC_security_margin,0.0742289609810154,0.0742289609810154,0,kA,1
+minimum_classic_SCR_security_margin,0.000485245434185266,0.000485245434185266,0,p.u.,1

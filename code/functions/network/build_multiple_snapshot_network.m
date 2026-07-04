@@ -1,5 +1,5 @@
 function NET = build_multiple_snapshot_network(mpc, CONF)
-%% 本函数功能是构造多时刻优化所需的网络矩阵和逐时参数。
+%% 本函数功能是构造多时段优化所需的网络矩阵和逐时参数。
 %% 1. 生成算例规模参数和位置矩阵
 N = CONF.Bn;
 G = CONF.Gn;
@@ -40,10 +40,12 @@ NET.Line_Limited  = isfinite(NET.Line_Pmax) & NET.Line_Pmax > 0;
 % 基准节点有功负荷。
 NET.P_Load = full(NET.Load_Loc_Mat*mpc.bus(NET.Load_Indices,3));
 
-% 多时刻负荷、GFL-WG可用出力和运行权重。
-NET.P_Load_Profile          = CONF.P_Load_Profile;
-NET.P_GFL_Available_Profile = CONF.P_GFL_Available_Profile;
-NET.OperatingWeights_Hours  = CONF.OperatingWeights_Hours;
+% 多时段负荷、场景化GFL-WG可用出力、场景概率和运行权重。
+NET.P_Load_Profile               = CONF.P_Load_Profile;
+NET.P_GFL_Available_Profile      = CONF.P_GFL_Available_Profile;
+NET.P_GFL_Available_Scenarios    = CONF.P_GFL_Available_Scenarios;
+NET.WindScenarioProbabilities    = CONF.WindScenarioProbabilities;
+NET.OperatingWeights_Hours       = CONF.OperatingWeights_Hours;
 
 %% 3. 生成节点导纳矩阵
 fb = mpc.branch(:,1);

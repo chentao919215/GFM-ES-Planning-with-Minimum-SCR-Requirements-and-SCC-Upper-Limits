@@ -1,16 +1,23 @@
 function print_multiple_snapshot_summary(Result, result_file)
-%% 本函数功能是在命令行打印多时刻规划的关键结果。
+%% 本函数功能是在命令行打印多时段规划的关键结果。
 
-fprintf('\n多时刻 GFM-ES 配置完成。\n');
+fprintf('\n多时段 GFM-ES 配置完成。\n');
 fprintf('结果文件：%s\n', result_file);
 fprintf('典型日数量：%d，时段数量：%d。\n', ...
     Result.CONF.TypicalDayCount, Result.CONF.PeriodCount);
+fprintf('风电场景数量：%d；场景顺序：%s。\n', ...
+    Result.CONF.WindScenarioCount, ...
+    strjoin(Result.CONF.WindScenarioNames, ', '));
+fprintf('各典型日场景概率（行=典型日，列=场景）：\n');
+disp(Result.CONF.WindScenarioProbabilities);
 fprintf('总成本：%.6f\n', Result.Cost.Total);
 fprintf('GFL-WG全年弃风成本：%.6f\n', Result.Cost.Curt);
 fprintf('同步机全年启停成本：%.6f\n', Result.Cost.UC);
-fprintf('同步机聚合状态 u_G_SCC/u_G_SCR：1 = 投运，0 = 停机。\n');
-disp(Result.u_G_SCC(:)');
-disp(Result.u_G_SCR(:)');
+fprintf('同步机日内聚合状态按[机组,典型日]排列：1 = 投运，0 = 停机。\n');
+fprintf('u_G_SCC（各典型日内并集）：\n');
+disp(Result.u_G_SCC);
+fprintf('u_G_SCR（各典型日内交集）：\n');
+disp(Result.u_G_SCR);
 
 if isfield(Result, 'u_GFM_Mod') && ~isempty(Result.u_GFM_Mod)
     fprintf('GFM-ES模块投建 u_GFM_Mod：1 = 投建，0 = 不投建。\n');
@@ -24,10 +31,10 @@ if isfield(Result, 'E_GFM') && ~isempty(Result.E_GFM)
         sub2ind(size(Result.u_GFM_Mod), ...
         Result.CONF.GFM_Module_Candidate_Index(:), ...
         Result.CONF.GFM_Module_Order(:))));
-    soc_value = Result.E_GFM./reshape(installed_energy,[],1,1);
+    soc_value = Result.E_GFM./reshape(installed_energy,[],1,1,1);
     soc_value(~isfinite(soc_value)) = NaN;
-    disp([min(soc_value,[],[2,3],'omitnan'), ...
-        max(soc_value,[],[2,3],'omitnan')]);
+    disp([min(soc_value,[],[2,3,4],'omitnan'), ...
+        max(soc_value,[],[2,3,4],'omitnan')]);
 end
 
 fprintf('YALMIP建模时间：%.3f s\n', Result.Diagnostics.yalmiptime);

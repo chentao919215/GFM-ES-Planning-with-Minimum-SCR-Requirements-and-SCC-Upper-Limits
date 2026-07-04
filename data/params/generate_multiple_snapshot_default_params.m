@@ -1,4 +1,4 @@
-%% 生成多时刻GFM-ES配置算例的默认参数文件
+%% 生成多时段GFM-ES配置算例的默认参数文件
 % 本文件是给人阅读和维护的参数源文件；JSON文件是给程序读取的参数文件。
 % 修改参数时，优先修改本脚本，然后运行本脚本重新生成参数文件:
 % multiple_snapshot_default_params.json。
@@ -15,8 +15,8 @@ params.base_kV  = mpc.bus(1,10);
 params.base_kA  = params.base_MVA/params.base_kV/sqrt(3);
 params.base_O   = params.base_kV^2/params.base_MVA;
 
-%% 1. 多时刻运行场景
-% 采用若干确定性典型日，每个典型日包含12个连续2小时时段。
+%% 1. 多时段典型日与风电场景
+% 采用若干典型日，每个典型日包含12个连续2小时时段。
 % TypicalDayWeights_Days表示各典型日代表的实际天数，合计应为365天。
 % PeriodDurations_Hours表示各时段持续小时数，单个典型日内合计应为24小时。
 params.MultipleSnapshot = struct();
@@ -31,6 +31,18 @@ params.MultipleSnapshot.Factor                  = [1.0, 1.0;
 params.MultipleSnapshot.PeriodDurations_Hours   = 2*ones(1,12);
 params.MultipleSnapshot.LoadProfileSource       = 'MOST ex_load_profile';
 params.MultipleSnapshot.WindProfileSource       = 'MOST ex_wind_profile_d';
+
+% 风电场景参数集中配置在WindScenarios中。默认以原确定性可用出力轨迹为基准，
+% 对每个典型日分别生成低风、基准和高风三条完整日内轨迹。
+% 后续接入外部生成或场景缩减结果时，可将GenerationMode改为'explicit'，并在
+% GFL_Available_P_MW中按[节点,典型日,场景,时段]提供完整场景数据。
+params.MultipleSnapshot.WindScenarios = struct();
+params.MultipleSnapshot.WindScenarios.Count          = 3;
+params.MultipleSnapshot.WindScenarios.Names          = {'low','base','high'};
+params.MultipleSnapshot.WindScenarios.Probabilities  = [0.25,0.50,0.25];
+params.MultipleSnapshot.WindScenarios.ScaleFactors   = [0.8,1.0,1.2];
+params.MultipleSnapshot.WindScenarios.GenerationMode = 'scale_base_profiles';
+params.MultipleSnapshot.WindScenarios.GFL_Available_P_MW = [];
 
 %% 2. 线路参数修正
 % r、x、b:MATPOWER branch表中的电阻、电抗和线路充电电纳。
@@ -121,10 +133,10 @@ params.GFM_Modules.X_GFM_vir = (1./params.GFM_Modules.I_Post_Multiplier - ...
 params.GFM_Modules.X_GFM_res        = params.GFM_Modules.X_GFM_res*...
     params.base_MVA./params.GFM_Modules.PN_MW;
 
-%% 5. 确定性逐时负荷与GFL-WG可用出力
+%% 5. 确定性逐时负荷与GFL-WG基准可用出力
 % 逐时数据按[节点,典型日,时段]三维数组保存。
 % 负荷采用MOST的12时段确定性系统负荷曲线相对其基准负荷的变化倍率。
-% GFL-WG采用MOST的12时段确定性风电出力倍率，各已建场站共用同一条曲线。
+% GFL-WG采用MOST的12时段确定性风电出力倍率作为场景缩放基准轨迹。
 D = params.MultipleSnapshot.TypicalDayCount;
 T = params.MultipleSnapshot.PeriodCount;
 typical_day_factor = params.MultipleSnapshot.Factor;
@@ -197,7 +209,7 @@ params.ERR_TOL_FACTOR = 1e-6;
 %% 8. 求解性能参数
 % 日常开发采用0.5%%相对间隙和10分钟时限；最终论文算例可单独收紧。
 params.Solver = struct();
-params.Solver.Threads = 14;
+params.Solver.Threads = 0;
 params.Solver.MIPGap = 0.005;
 params.Solver.TimeLimit = 600;
 params.Solver.MIPFocus = 1;
@@ -216,7 +228,7 @@ params.Solver.TwoStage.Enabled = true;
 params.Solver.TwoStage.Stage1 = struct( ...
     'Name', 'feasible-search', ...
     'TimeLimit', 1800, ...
-    'MIPGap', 0.005, ...
+    'MIPGap', 0.3, ...
     'MIPFocus', 1, ...
     'Heuristics', 0.2);
 params.Solver.TwoStage.Stage2 = struct( ...

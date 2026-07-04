@@ -4,7 +4,8 @@ function Z_bounds = calculate_impedance_bounds(NET, CONF)
 % 同步机组合始终纳入全停状态；无电压源状态由Require_Source_Online剔除。
 % GFM-ES组合枚举满足模块投建规则的全部状态。
 
-% 多时刻ver_2.5模型分别预处理SCC完整降阶阻抗矩阵与SCR的GFL-WG阻抗列。
+% 多时段最终模型分别预处理SCC完整降阶阻抗矩阵与SCR的GFL-WG阻抗列。
+% 各典型日的设备状态可行域相同，因此逐元素上下界只枚举一次并由各典型日复用。
 if isfield(NET,'Y0_Safety')
     Z_bounds = local_calculate_safety_bounds(NET,CONF);
     return;
@@ -139,6 +140,8 @@ Z_bounds.SCR = local_finalize_extrema(scr_extrema,CONF.ZBoundMargin);
 Z_bounds.SCC.column_reduced_indices = (1:NS).';
 Z_bounds.SCR.column_reduced_indices = gfl_column_indices;
 Z_bounds.valid_case_count = valid_case_count;
+Z_bounds.typical_day_count = CONF.TypicalDayCount;
+Z_bounds.shared_across_typical_days = true;
 
 end
 

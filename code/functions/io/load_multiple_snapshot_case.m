@@ -1,6 +1,6 @@
 function [mpc, CONF, paths] = load_multiple_snapshot_case(project_root, param_file)
-%% 本函数功能是加载确定性多时刻算例并构造优化配置参数。
-% 本函数独立读取静态网络、设备、安全约束和多时刻运行参数。
+%% 本函数功能是加载场景随机多时段算例并构造优化配置参数。
+% 本函数独立读取静态网络、设备、安全约束、典型日和风电场景参数。
 
 params = read_json_file(param_file);
 
@@ -41,6 +41,10 @@ GFL_params = params.GFL_WG;
 CONF.GFL_Curtailment_Cost_per_MWh = GFL_params.Curtailment_Cost_per_MWh;
 CONF.PN_GFL_Node = expand_built_node_parameter( ...
     GFL_params.PN_MW, GFL_built_nodes, CONF.Bn);
+if any(~isfinite(CONF.PN_GFL_Node(GFL_built_nodes))) || ...
+        any(CONF.PN_GFL_Node(GFL_built_nodes) <= 0)
+    error('已建GFL-WG场站额定功率必须为有限正数。');
+end
 CONF.PN_GFL = max(CONF.PN_GFL_Node(CONF.u_GFL > 0.5));
 CONF.PN_GFL_pu_Node = CONF.PN_GFL_Node/CONF.Base_MVA;
 
@@ -96,6 +100,14 @@ CONF.Safety_GFL_Original_Nodes = GFL_built_nodes;
 CONF.Safety_GFL_Reduced_Indices = original_to_reduced(GFL_built_nodes);
 CONF.Safety_GFL_Count = numel(GFL_built_nodes);
 
+% SCC约束节点必须完整覆盖同步机、GFM-ES候选节点和已建GFL-WG接入节点。
+scc_required_nodes = unique([mpc.gen(:,1); GFMModules.CandidateBus(:); ...
+    GFL_built_nodes],'sorted');
+if ~isequal(safety_nodes,scc_required_nodes)
+    error('SCC安全网络保留节点未覆盖全部已建及候选有源设备接入节点。');
+end
+CONF.SCC_Constraint_Original_Nodes = safety_nodes;
+
 %% 5. 读取短路电流与短路比安全参数
 CONF.I_limit_kA_Node = expand_system_node_parameter(params.I_limit_kA, CONF.Bn);
 
@@ -120,8 +132,21 @@ multi = params.MultipleSnapshot;
 D     = multi.TypicalDayCount;
 T     = multi.PeriodCount;
 
+if ~isscalar(D) || ~isfinite(D) || D ~= round(D) || D < 1 || ...
+        ~isscalar(T) || ~isfinite(T) || T ~= round(T) || T < 1
+    error('TypicalDayCount和PeriodCount必须为正整数。');
+end
+
 day_weights  = multi.TypicalDayWeights_Days(:);
 period_hours = multi.PeriodDurations_Hours(:);
+if numel(day_weights) ~= D || any(~isfinite(day_weights)) || ...
+        any(day_weights <= 0) || abs(sum(day_weights)-365) > 1e-8
+    error('TypicalDayWeights_Days应包含%d个正数且合计为365天。',D);
+end
+if numel(period_hours) ~= T || any(~isfinite(period_hours)) || ...
+        any(period_hours <= 0) || abs(sum(period_hours)-24) > 1e-8
+    error('PeriodDurations_Hours应包含%d个正数且合计为24小时。',T);
+end
 
 CONF.TypicalDayCount = D;
 CONF.PeriodCount     = T;
@@ -129,11 +154,55 @@ CONF.TypicalDayWeights_Days = day_weights;
 CONF.PeriodDurations_Hours = period_hours;
 CONF.OperatingWeights_Hours = day_weights*period_hours.';
 
-%% 7. 读取逐时负荷与GFL-WG可用出力
+%% 7. 读取逐时负荷与GFL-WG场景可用出力
+expected_profile_count = CONF.Bn*D*T;
+if numel(multi.Load_P_MW) ~= expected_profile_count || ...
+        numel(multi.GFL_Available_P_MW) ~= expected_profile_count
+    error('逐时负荷与GFL-WG可用出力均应包含%d个节点-典型日-时段数据。', ...
+        expected_profile_count);
+end
 CONF.P_Load_Profile = reshape(multi.Load_P_MW, CONF.Bn, D, T);
 CONF.P_GFL_Available_Profile = reshape(multi.GFL_Available_P_MW, CONF.Bn, D, T);
 
-% 同步机最小出力显式由多时刻参数文件给定。
+% 额定功率用于SCC/SCR，逐时可用出力用于弃风上界，实际出力由优化变量给出。
+if any(~isfinite(CONF.P_GFL_Available_Profile(:))) || ...
+        any(CONF.P_GFL_Available_Profile(:) < 0)
+    error('GFL-WG逐时可用出力必须为有限非负数。');
+end
+non_gfl_nodes = CONF.u_GFL < 0.5;
+if any(CONF.P_GFL_Available_Profile(non_gfl_nodes,:,:) ~= 0,'all')
+    error('非GFL-WG接入节点的逐时可用出力必须为零。');
+end
+
+% WindScenarios集中配置场景名称、概率和轨迹生成方式。未配置时退化为
+% 单一基准场景，以兼容原确定性参数文件。
+[scenario_names, scenario_probabilities, scenario_scale_factors, ...
+    scenario_available, scenario_mode, base_scenario_index] = ...
+    build_wind_scenarios(multi, CONF.P_GFL_Available_Profile, ...
+    CONF.u_GFL, D, T, CONF.Bn);
+
+CONF.WindScenarioCount = numel(scenario_names);
+CONF.WindScenarioNames = scenario_names;
+CONF.WindScenarioProbabilities = scenario_probabilities;
+CONF.WindScenarioScaleFactors = scenario_scale_factors;
+CONF.WindScenarioGenerationMode = scenario_mode;
+CONF.WindScenarioBaseIndex = base_scenario_index;
+CONF.P_GFL_Available_Scenarios = scenario_available;
+
+% 输入级确定性退化标记：仅保留概率为1且轨迹等于原确定性轨迹的场景时为真。
+profile_difference = scenario_available - ...
+    reshape(CONF.P_GFL_Available_Profile, CONF.Bn, D, 1, T);
+CONF.DeterministicDegradation = struct();
+CONF.DeterministicDegradation.IsSingleProbabilityOneScenario = ...
+    CONF.WindScenarioCount == 1 && ...
+    max(abs(scenario_probabilities(:)-1)) <= 1e-12;
+CONF.DeterministicDegradation.ProfileMatchesOriginal = ...
+    CONF.WindScenarioCount == 1 && max(abs(profile_difference(:))) <= 1e-10;
+CONF.DeterministicDegradation.InputEquivalent = ...
+    CONF.DeterministicDegradation.IsSingleProbabilityOneScenario && ...
+    CONF.DeterministicDegradation.ProfileMatchesOriginal;
+
+% 同步机最小出力显式由多时段参数文件给定。
 CONF.Gen_Pmin = params.Gen_Pmin_MW(:);
 
 %% 8. 读取同步机UC参数
@@ -380,6 +449,107 @@ if isfield(input_struct, field_name) && ~isempty(input_struct.(field_name))
     value = input_struct.(field_name);
 else
     value = default_value;
+end
+
+end
+
+function [names, probabilities, scale_factors, available_scenarios, ...
+    generation_mode, base_index] = build_wind_scenarios( ...
+    multi, base_available, u_gfl, day_count, period_count, node_count)
+%% 集中解析风电场景，并构造[节点,典型日,场景,时段]可用出力。
+
+if ~isfield(multi, 'WindScenarios') || isempty(multi.WindScenarios)
+    scenario = struct('Count',1, 'Names',{{'base'}}, ...
+        'Probabilities',1, 'ScaleFactors',1, ...
+        'GenerationMode','scale_base_profiles');
+else
+    scenario = multi.WindScenarios;
+end
+
+probability_input = get_struct_field(scenario, 'Probabilities', 1);
+scenario_count = get_struct_field(scenario, 'Count', numel(probability_input));
+if ~isscalar(scenario_count) || ~isfinite(scenario_count) || ...
+        scenario_count ~= round(scenario_count) || scenario_count < 1
+    error('MultipleSnapshot.WindScenarios.Count必须为正整数。');
+end
+
+names_input = get_struct_field(scenario, 'Names', ...
+    arrayfun(@(k) sprintf('scenario_%d',k), 1:scenario_count, ...
+    'UniformOutput',false));
+names = cellstr(string(names_input(:)));
+names = names(:).';
+if numel(names) ~= scenario_count || any(cellfun(@isempty,names)) || ...
+        numel(unique(lower(string(names)))) ~= scenario_count
+    error('WindScenarios.Names应包含%d个非空且互不重复的场景名称。',scenario_count);
+end
+
+probabilities = expand_day_scenario_parameter( ...
+    probability_input, day_count, scenario_count, 'Probabilities');
+if any(~isfinite(probabilities(:))) || any(probabilities(:) <= 0) || ...
+        any(abs(sum(probabilities,2)-1) > 1e-12)
+    error('各典型日的WindScenarios.Probabilities必须为正数且逐日合计为1。');
+end
+
+generation_mode = char(string(get_struct_field( ...
+    scenario, 'GenerationMode', 'scale_base_profiles')));
+switch lower(generation_mode)
+    case 'scale_base_profiles'
+        scale_factors = expand_day_scenario_parameter( ...
+            get_struct_field(scenario, 'ScaleFactors', ones(1,scenario_count)), ...
+            day_count, scenario_count, 'ScaleFactors');
+        if any(~isfinite(scale_factors(:))) || any(scale_factors(:) < 0)
+            error('WindScenarios.ScaleFactors必须为有限非负数。');
+        end
+        available_scenarios = ...
+            reshape(base_available,node_count,day_count,1,period_count).* ...
+            reshape(scale_factors,1,day_count,scenario_count,1);
+    case 'explicit'
+        explicit_available = get_struct_field( ...
+            scenario, 'GFL_Available_P_MW', []);
+        expected_count = node_count*day_count*scenario_count*period_count;
+        if numel(explicit_available) ~= expected_count
+            error(['WindScenarios.GFL_Available_P_MW在explicit模式下应包含', ...
+                '%d个节点-典型日-场景-时段数据。'],expected_count);
+        end
+        available_scenarios = reshape(explicit_available, ...
+            node_count,day_count,scenario_count,period_count);
+        scale_factors = NaN(day_count,scenario_count);
+    otherwise
+        error('不支持的WindScenarios.GenerationMode：%s。',generation_mode);
+end
+
+if any(~isfinite(available_scenarios(:))) || any(available_scenarios(:) < 0)
+    error('各场景GFL-WG可用出力必须为有限非负数。');
+end
+non_gfl_nodes = u_gfl < 0.5;
+if any(available_scenarios(non_gfl_nodes,:,:,:) ~= 0,'all')
+    error('非GFL-WG接入节点的各场景可用出力必须为零。');
+end
+
+base_index = find(strcmpi(names,'base'),1);
+if isempty(base_index) && all(isfinite(scale_factors(:)))
+    unit_scale = find(all(abs(scale_factors-1) <= 1e-12,1));
+    if isscalar(unit_scale)
+        base_index = unit_scale;
+    end
+end
+if isempty(base_index)
+    base_index = NaN;
+end
+
+function values = expand_day_scenario_parameter(values, day_count, ...
+    scenario_count, field_name)
+%% 将场景参数扩展为[典型日,场景]矩阵。
+
+if isvector(values) && numel(values) == scenario_count
+    values = repmat(reshape(values,1,scenario_count),day_count,1);
+elseif numel(values) == day_count*scenario_count
+    values = reshape(values,day_count,scenario_count);
+else
+    error('WindScenarios.%s的维度应为1×%d或%d×%d。', ...
+        field_name,scenario_count,day_count,scenario_count);
+end
+
 end
 
 end
