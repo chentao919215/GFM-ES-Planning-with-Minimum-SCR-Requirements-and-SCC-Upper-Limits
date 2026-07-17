@@ -92,7 +92,7 @@ Z_bounds = calculate_impedance_bounds(NET, CONF);
 % 逐时二进制变量：同步机运行状态以及启动、停机动作。
 u_SG = binvar(G,D,T,'full');
 u_SG_start = binvar(G,D,T,'full');
-u_SG_stop = binvar(G,D,T,'full');
+u_SG_stop  = binvar(G,D,T,'full');
 
 % 跨典型日和时段共享的GFM-ES模块投建状态。
 u_GFM_mod       = binvar(N_GFM,N_GFM_Module,'full');
@@ -417,6 +417,8 @@ end
 % 统一装配规划、运行、安全和成本约束。
 C = [C_plan, C_operation, C_aggregate, C_impedance_SCC, ...
     C_impedance_SCR, C_scc, C_scr, C_cost];
+
+% C = [C_plan, C_operation, C_cost];
 
 % GFM-ES年化投建成本由单位功率成本和单位能量成本预先汇总到模块级。
 Cost_GFM_Inv = GFM_Module_Cost_Conv'*u_GFM_mod_table;

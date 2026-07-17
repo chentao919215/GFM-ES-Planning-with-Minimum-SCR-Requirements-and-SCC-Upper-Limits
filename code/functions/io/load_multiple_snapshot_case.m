@@ -13,8 +13,7 @@ mpc.branch(:,4) = params.BranchScale.x*mpc.branch(:,4);
 mpc.branch(:,5) = params.BranchScale.b*mpc.branch(:,5);
 
 % 按给定负载率更新同步机成本函数的常数项。
-mpc.gencost(:,7) = mpc.gencost(:,5).*((params.GenCostLoading*mpc.gen(:,9)).^2) + ...
-                   mpc.gencost(:,6).*(params.GenCostLoading*mpc.gen(:,9));
+mpc.gencost(:,7) = 0;
 
 %% 2. 构造基础优化配置
 CONF = struct();

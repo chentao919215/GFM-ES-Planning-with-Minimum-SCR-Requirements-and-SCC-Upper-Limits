@@ -63,18 +63,18 @@ params.Gen_Pmin_MW = 0.05*mpc.gen(:,9);
 % GenCostBreakpoints为归一化同步机出力的分段透视割切点。
 params.GenCostBreakpoints = 0:0.1:1;
 
-% UC参数按同步机额定功率和固定运行成本统一生成。
+% UC参数按同步机额定功率和5%额定出力成本统一生成。
 % 上、下爬坡速率均为0.2倍额定功率，最小开、停机时段数均为3。
-% 单次启动、停机成本分别为固定运行成本c^(G)_g的2倍和0.5倍。
-gen_fixed_cost = mpc.gencost(:,5).*((params.GenCostLoading*mpc.gen(:,9)).^2) + ...
+% 单次启动、关停成本分别为5%额定出力成本的1.0倍和0.25倍。
+gen_cost_at_5pct = mpc.gencost(:,5).*((params.GenCostLoading*mpc.gen(:,9)).^2) + ...
     mpc.gencost(:,6).*(params.GenCostLoading*mpc.gen(:,9));
 params.UC = struct();
 params.UC.RampUp_Rate_MW_per_Hour   = 0.2*mpc.gen(:,9);
 params.UC.RampDown_Rate_MW_per_Hour = 0.2*mpc.gen(:,9);
-params.UC.MinUp_Periods              = 3*ones(size(mpc.gen,1),1);
-params.UC.MinDown_Periods            = 3*ones(size(mpc.gen,1),1);
-params.UC.Startup_Cost               = 2*gen_fixed_cost;
-params.UC.Shutdown_Cost              = 0.5*gen_fixed_cost;
+params.UC.MinUp_Periods              = 2*ones(size(mpc.gen,1),1);
+params.UC.MinDown_Periods            = 2*ones(size(mpc.gen,1),1);
+params.UC.Startup_Cost               = 1.0*gen_cost_at_5pct;
+params.UC.Shutdown_Cost              = 0.25*gen_cost_at_5pct;
 
 % GFL_WG用于显式记录已建GFL-WG场站参数。
 % PN_MW可以为标量、与GFL_Built_Nodes等长的向量，或全节点向量。
@@ -252,7 +252,7 @@ fclose(fid);
 fprintf('已生成参数文件：%s\n', output_file);
 
 %% 10. 清除本脚本生成的变量
-clear D T ans fid gen_fixed_cost GFL_node_period GFL_rated_node json_text load_node_period ...
+clear D T ans fid gen_cost_at_5pct GFL_node_period GFL_rated_node json_text load_node_period ...
     load_factor load_total_MW MOST_base_case MOST_load_base_MW ...
     MOST_load_profile MOST_wind_profile output_file param_dir params ...
     typical_day_factor wind_available_factor

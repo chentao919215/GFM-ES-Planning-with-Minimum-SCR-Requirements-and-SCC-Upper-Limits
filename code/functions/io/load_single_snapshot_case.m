@@ -9,8 +9,7 @@ mpc.branch(:,3) = params.BranchScale.r*mpc.branch(:,3);
 mpc.branch(:,4) = params.BranchScale.x*mpc.branch(:,4);
 mpc.branch(:,5) = params.BranchScale.b*mpc.branch(:,5);
 
-mpc.gencost(:,7) = mpc.gencost(:,5).*((params.GenCostLoading*mpc.gen(:,9)).^2) + ...
-                   mpc.gencost(:,6).*(params.GenCostLoading*mpc.gen(:,9));
+mpc.gencost(:,7) = 0;
 
 %% 2. Optimization configuration
 CONF = struct();
