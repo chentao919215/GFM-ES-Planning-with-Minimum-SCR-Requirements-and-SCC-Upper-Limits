@@ -12,9 +12,6 @@ mpc.branch(:,3) = params.BranchScale.r*mpc.branch(:,3);
 mpc.branch(:,4) = params.BranchScale.x*mpc.branch(:,4);
 mpc.branch(:,5) = params.BranchScale.b*mpc.branch(:,5);
 
-% 按给定负载率更新同步机成本函数的常数项。
-mpc.gencost(:,7) = 0;
-
 %% 2. 构造基础优化配置
 CONF = struct();
 
@@ -27,7 +24,11 @@ CONF.Base_kV  = params.base_kV;
 CONF.Base_kA  = params.base_kA;
 CONF.Base_O   = params.base_O;
 
-CONF.Xd_Gen = params.Xd_Gen;
+% 文档按同步机分别定义次暂态电抗；标量输入仍兼容为全机组统一值。
+CONF.Xd_Gen = expand_generator_parameter(params.Xd_Gen, CONF.Gn, 'Xd_Gen');
+if any(~isfinite(CONF.Xd_Gen)) || any(CONF.Xd_Gen <= 0)
+    error('Xd_Gen必须为有限正数。');
+end
 CONF.GenCostBreakpoints = params.GenCostBreakpoints(:)';
 
 %% 3. 读取GFL-WG参数
@@ -67,7 +68,7 @@ CONF.GFM_Module_X_res = GFMModules.X_GFM_res;
 CONF.GFM_Module_I_post = GFMModules.I_post;
 CONF.GFM_Module_X_vir = GFMModules.X_GFM_vir;
 CONF.GFM_Module_DeltaY = GFMModules.DeltaY;
-CONF.GFM_Module_DeltaY_abs = abs(GFMModules.DeltaY);
+CONF.GFM_Module_DeltaY_abs = GFMModules.DeltaB;
 CONF.GFM_Module_Loc_Mat = sparse(GFMModules.Bus,(1:GFMModules.Count)', ...
     1,CONF.Bn,GFMModules.Count);
 CONF.GFM_Module_Candidates = GFMModules.CandidateBus(:)';
@@ -143,8 +144,10 @@ if numel(day_weights) ~= D || any(~isfinite(day_weights)) || ...
     error('TypicalDayWeights_Days应包含%d个正数且合计为365天。',D);
 end
 if numel(period_hours) ~= T || any(~isfinite(period_hours)) || ...
-        any(period_hours <= 0) || abs(sum(period_hours)-24) > 1e-8
-    error('PeriodDurations_Hours应包含%d个正数且合计为24小时。',T);
+        any(period_hours <= 0) || abs(sum(period_hours)-24) > 1e-8 || ...
+        any(abs(period_hours-24/T) > 1e-10)
+    error(['文档模型要求PeriodDurations_Hours包含%d个相等的正数，', ...
+        '每个时段为%.12g小时且合计为24小时。'],T,24/T);
 end
 
 CONF.TypicalDayCount = D;
@@ -248,7 +251,7 @@ values = values(:);
 if isscalar(values)
     values = repmat(values,n_generators,1);
 elseif numel(values) ~= n_generators
-    error('UC.%s的长度应为1或同步机数量%d。',field_name,n_generators);
+    error('%s的长度应为1或同步机数量%d。',field_name,n_generators);
 end
 
 end
@@ -306,6 +309,11 @@ soc_min = expand_module_parameter(module_params.SOC_Min, n_modules, 'SOC_Min');
 
 validate_gfm_storage_parameters(pn_mw, rated_energy, charge_efficiency, ...
     discharge_efficiency, soc_min, soc_initial, soc_max);
+if any(~isfinite(x_res)) || any(x_res <= 0) || ...
+        any(~isfinite(x_vir)) || any(x_vir < 0) || ...
+        any(x_res+x_vir <= 0)
+    error('GFM-ES运行电抗必须为正，虚拟电抗必须为非负。');
+end
 
 candidate_bus = unique(bus,'stable');
 [~, candidate_index] = ismember(bus,candidate_bus);
@@ -335,7 +343,8 @@ GFMModules.X_GFM_res = x_res;
 GFMModules.I_Post_Multiplier = i_post_multiplier;
 GFMModules.I_post = i_post_multiplier.*pn_mw/CONF.Base_MVA;
 GFMModules.X_GFM_vir = x_vir;
-GFMModules.DeltaY = 1./(1i*(x_res+x_vir))-1./(1i*x_res);
+GFMModules.DeltaB = 1./x_res-1./(x_res+x_vir);
+GFMModules.DeltaY = 1i*GFMModules.DeltaB;
 GFMModules.CandidateBus = candidate_bus;
 GFMModules.CandidateIndex = candidate_index;
 GFMModules.CandidateChargeEfficiency = candidate_charge_efficiency;

@@ -25,12 +25,12 @@ imag_min =  inf(N,N);
 imag_max = -inf(N,N);
 valid_case_count = 0;
 
-Y_sg_unit  = 1/(1i*CONF.Xd_Gen);
+Y_sg_unit  = 1./(1i*CONF.Xd_Gen(:));
 Y_gfm_mod = 1 ./ (1i*CONF.GFM_Module_X_res(:));
 
 for sg_idx = 1:size(sg_cases, 1)
     sg_status = sg_cases(sg_idx,:).';
-    Y_sg_diag = (NET.Gen_Loc_Mat * sg_status) * Y_sg_unit;
+    Y_sg_diag = NET.Gen_Loc_Mat * (sg_status .* Y_sg_unit);
 
     for gfm_idx = 1:size(gfm_cases, 1)
         gfm_status = gfm_cases(gfm_idx,:).';
@@ -95,14 +95,14 @@ scc_extrema = local_initialize_extrema(NS,NS);
 scr_extrema = local_initialize_extrema(NS,NGFL);
 valid_case_count = 0;
 
-Y_sg_unit = 1/(1i*CONF.Xd_Gen);
+Y_sg_unit = 1./(1i*CONF.Xd_Gen(:));
 Y_gfm_mod = 1./(1i*CONF.GFM_Module_X_res(:));
 I_SCC = eye(NS);
 I_SCR = sparse(gfl_column_indices,(1:NGFL).',1,NS,NGFL);
 
 for sg_idx = 1:size(sg_cases,1)
     sg_status = sg_cases(sg_idx,:).';
-    Y_sg_diag = (NET.Safety_Gen_Loc_Mat*sg_status)*Y_sg_unit;
+    Y_sg_diag = NET.Safety_Gen_Loc_Mat*(sg_status.*Y_sg_unit);
 
     for gfm_idx = 1:size(gfm_cases,1)
         gfm_status = gfm_cases(gfm_idx,:).';

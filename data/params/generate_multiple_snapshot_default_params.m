@@ -18,7 +18,7 @@ params.base_O   = params.base_kV^2/params.base_MVA;
 %% 1. 多时段典型日与风电场景
 % 采用若干典型日，每个典型日包含12个连续2小时时段。
 % TypicalDayWeights_Days表示各典型日代表的实际天数，合计应为365天。
-% PeriodDurations_Hours表示各时段持续小时数，单个典型日内合计应为24小时。
+% PeriodDurations_Hours表示各时段持续小时数；文档模型要求同一典型日内各时段等长且合计24小时。
 params.MultipleSnapshot = struct();
 params.MultipleSnapshot.TypicalDayCount         = 3;
 params.MultipleSnapshot.PeriodCount             = 12;
@@ -29,20 +29,14 @@ params.MultipleSnapshot.Factor                  = [1.0, 1.0;
                                                    1.1, 0.9;
                                                    0.9, 1.0];
 params.MultipleSnapshot.PeriodDurations_Hours   = 2*ones(1,12);
-params.MultipleSnapshot.LoadProfileSource       = 'MOST ex_load_profile';
-params.MultipleSnapshot.WindProfileSource       = 'MOST ex_wind_profile_d';
 
 % 风电场景参数集中配置在WindScenarios中。默认以原确定性可用出力轨迹为基准，
 % 对每个典型日分别生成低风、基准和高风三条完整日内轨迹。
-% 后续接入外部生成或场景缩减结果时，可将GenerationMode改为'explicit'，并在
-% GFL_Available_P_MW中按[节点,典型日,场景,时段]提供完整场景数据。
 params.MultipleSnapshot.WindScenarios = struct();
 params.MultipleSnapshot.WindScenarios.Count          = 3;
 params.MultipleSnapshot.WindScenarios.Names          = {'low','base','high'};
 params.MultipleSnapshot.WindScenarios.Probabilities  = [0.25,0.50,0.25];
 params.MultipleSnapshot.WindScenarios.ScaleFactors   = [0.8,1.0,1.2];
-params.MultipleSnapshot.WindScenarios.GenerationMode = 'scale_base_profiles';
-params.MultipleSnapshot.WindScenarios.GFL_Available_P_MW = [];
 
 %% 2. 线路参数修正
 % r、x、b:MATPOWER branch表中的电阻、电抗和线路充电电纳。
@@ -52,27 +46,27 @@ params.BranchScale.x = 7/4;
 params.BranchScale.b = 4/7;
 
 %% 3. 同步机与变流器基础参数
-% Xd_Gen:同步机暂态电抗。
+% Xd_Gen:同步机次暂态电抗（系统基准；可为标量或逐机组向量）。
 % GenCostLoading:构造同步机固定成本项，现在5%出力时的成本为固定成本。
 params.Xd_Gen = 0.04;
 params.GenCostLoading = 0.05;
 
-% Gen_Pmin_MW为同步机最小有功出力，当前沿用5%额定出力。
-params.Gen_Pmin_MW = 0.05*mpc.gen(:,9);
+% Gen_Pmin_MW为同步机最小有功出力，当前沿用20%额定出力。
+params.Gen_Pmin_MW = 0.2*mpc.gen(:,9);
 
 % GenCostBreakpoints为归一化同步机出力的分段透视割切点。
 params.GenCostBreakpoints = 0:0.1:1;
 
 % UC参数按同步机额定功率和5%额定出力成本统一生成。
-% 上、下爬坡速率均为0.2倍额定功率，最小开、停机时段数均为3。
+% 上、下爬坡速率均为0.2倍额定功率，最小开、停机时段数均为1。
 % 单次启动、关停成本分别为5%额定出力成本的1.0倍和0.25倍。
 gen_cost_at_5pct = mpc.gencost(:,5).*((params.GenCostLoading*mpc.gen(:,9)).^2) + ...
     mpc.gencost(:,6).*(params.GenCostLoading*mpc.gen(:,9));
 params.UC = struct();
 params.UC.RampUp_Rate_MW_per_Hour   = 0.2*mpc.gen(:,9);
 params.UC.RampDown_Rate_MW_per_Hour = 0.2*mpc.gen(:,9);
-params.UC.MinUp_Periods              = 2*ones(size(mpc.gen,1),1);
-params.UC.MinDown_Periods            = 2*ones(size(mpc.gen,1),1);
+params.UC.MinUp_Periods              = ones(size(mpc.gen,1),1);
+params.UC.MinDown_Periods            = ones(size(mpc.gen,1),1);
 params.UC.Startup_Cost               = 1.0*gen_cost_at_5pct;
 params.UC.Shutdown_Cost              = 0.25*gen_cost_at_5pct;
 
@@ -141,7 +135,7 @@ D = params.MultipleSnapshot.TypicalDayCount;
 T = params.MultipleSnapshot.PeriodCount;
 typical_day_factor = params.MultipleSnapshot.Factor;
 
-% 每个典型日均应分别给定GFL-WG可用出力倍率和负荷倍率。
+% 每个典型日均应分别给定GFL-WG可用出力Per倍率和负荷倍率。
 if ~isequal(size(typical_day_factor), [D, 2])
     error('MultipleSnapshot.Factor的维度应为TypicalDayCount×2，即%d×2。',D);
 end
@@ -161,9 +155,9 @@ for i = 1:size(load_factor,1)/2
     load_factor(i) = load_factor(size(load_factor,1)+1-i);
     load_factor(size(load_factor,1)+1-i) = temp;
 end
-clear temp
 load_node_period  = mpc.bus(:,3)*load_factor.';
 params.MultipleSnapshot.LoadFactor = load_factor;
+
 % Factor第二列用于逐典型日缩放负荷，得到[节点,典型日,时段]三维数据。
 params.MultipleSnapshot.Load_P_MW = ...
     reshape(load_node_period, size(mpc.bus,1), 1, T).* ...
@@ -177,10 +171,11 @@ for i = 1:size(wind_available_factor,1)/2
     wind_available_factor(i) = wind_available_factor(size(wind_available_factor,1)+1-i);
     wind_available_factor(size(wind_available_factor,1)+1-i) = temp;
 end
-clear temp
+clear i temp
 GFL_rated_node        = zeros(size(mpc.bus,1),1);
 GFL_rated_node(params.GFL_Built_Nodes) = params.GFL_WG.PN_MW;
 GFL_node_period = GFL_rated_node*wind_available_factor.';
+
 % Factor第一列用于逐典型日缩放GFL-WG可用出力，保持各场站日内曲线形状不变。
 params.MultipleSnapshot.GFL_Available_P_MW = ...
     reshape(GFL_node_period, size(mpc.bus,1), 1, T).* ...
@@ -194,7 +189,7 @@ params.I_limit_kA = 12.25;
 params.SCR_min = 3;
 
 % Require_Source_Online:是否要求每个时刻至少一个同步机或GFM-ES模块投运/投建。
-params.Require_Source_Online = false;
+params.Require_Source_Online = true;
 
 %% 7. 求解器与数值参数
 % KZ:放大阻抗元素，改善数值稳健性。
@@ -217,8 +212,6 @@ params.Solver.Heuristics = 0.2;
 params.Solver.NoRelHeurWork = 0;
 % 将年成本目标缩放到约10的数量级，不改变最优解与原始成本输出。
 params.Solver.ObjectiveScale = 1e5;
-% 仅在算例维度与模块顺序完全兼容时读取最近一次成功结果的整数解。
-params.Solver.UseLatestMIPStart = false;
 
 % 两阶段求解：第一阶段优先寻找高质量可行解，第二阶段利用该解强化下界并证明最优性。
 % 第二阶段允许0.5%的相对最优性间隙，并采用两路并发MIP搜索降低搜索路径偶然性。
@@ -227,13 +220,13 @@ params.Solver.TwoStage = struct();
 params.Solver.TwoStage.Enabled = true;
 params.Solver.TwoStage.Stage1 = struct( ...
     'Name', 'feasible-search', ...
-    'TimeLimit', 1800, ...
+    'TimeLimit', 300, ...
     'MIPGap', 0.3, ...
     'MIPFocus', 1, ...
     'Heuristics', 0.2);
 params.Solver.TwoStage.Stage2 = struct( ...
     'Name', 'optimality-proof', ...
-    'TimeLimit', 7200, ...
+    'TimeLimit', 1800, ...
     'MIPGap', 0.005, ...
     'MIPFocus', 3, ...
     'Heuristics', 0.01, ...
@@ -255,4 +248,4 @@ fprintf('已生成参数文件：%s\n', output_file);
 clear D T ans fid gen_cost_at_5pct GFL_node_period GFL_rated_node json_text load_node_period ...
     load_factor load_total_MW MOST_base_case MOST_load_base_MW ...
     MOST_load_profile MOST_wind_profile output_file param_dir params ...
-    typical_day_factor wind_available_factor
+    typical_day_factor wind_available_factor mpc

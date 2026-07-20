@@ -4,7 +4,7 @@
 
 ## 当前进度
 
-项目已完成确定性单时刻和确定性多时段模型，并在此基础上实现了考虑GFL-WG可用出力不确定性的场景随机多时段模块化GFM-ES配置优化模型。当前模型包括：
+项目当前采用考虑GFL-WG可用出力不确定性的场景随机多时段模块化GFM-ES配置优化模型。当前模型包括：
 
 - 低风、基准和高风完整日内轨迹及逐典型日场景概率；
 - GFM-ES投建状态与同步机组合状态跨场景共享；
@@ -19,6 +19,15 @@
 - 同步机和GFM-ES共同参与的阻抗矩阵重构及二元变量乘积线性化；
 - 按典型日权重、场景概率和时段时长计算的期望运行成本；
 - 两阶段Gurobi求解、场景结果打包、热启动映射、诊断输出和确定性退化检查。
+
+当前已增加GFL的LVRT与限流环节，并完成相应的Simulink仿真组织：
+
+- `Grid_Following_Inverters_LVRT.slx`支持自动电流参考和手动电流参考两种模式；
+- 手动参考电流仍经过LVRT和无功优先限流环节，不绕过故障穿越控制；
+- 参数脚本为 `code/scripts/equipment/Invert_Parameters.m`，默认手动参考由 `Manual_Current_Ref`、`Id_ref_manual` 和 `Iq_ref_manual` 控制；
+- 报告图5-2扫描脚本为 `code/scripts/figure/for_report/report_04/plot_fig_05_02.m`，输出位于 `figs/for_report/`；
+- Simulink模型统一位于 `simulink/models/`，缓存和代码生成文件统一位于 `simulink/artifacts/`；
+- 模型 `InitFcn` 已自动配置Simulink生成目录，手动运行模型时不再依赖当前工作目录。
 
 安全状态仍仅在各典型日内跨时段聚合：SCC采用同步机状态并集，SCR采用同步机状态交集。安全网络阻抗重构、McCormick辅助变量及阻抗上下界预处理不增加风电场景维度。同步机运行状态、启动动作、停机动作、爬坡过程和最小开停机过程均在各典型日日首与日末之间循环衔接。
 
@@ -37,22 +46,13 @@ data/params/generate_multiple_snapshot_default_params.m
 data/params/multiple_snapshot_default_params.json
 ```
 
-确定性单时刻模型仍保留为基础算例：
-
-```text
-code/scripts/system/run_single_snapshot_planning.m
-data/params/generate_single_snapshot_default_params.m
-data/params/single_snapshot_default_params.json
-```
-
 长时间求解可使用：
 
 ```text
 code/scripts/system/start_multiple_snapshot_planning_longrun.m
-code/scripts/system/start_single_snapshot_planning_longrun.m
 ```
 
-多时段主脚本运行时会先执行参数生成脚本、加载完整D=3/K=3算例，并构造仅保留基准场景且概率为1的退化输入进行轻量检查，随后按当前单阶段或两阶段配置求解完整算例。代码仍保留D=1典型日映射和历史结果热启动能力。维护参数时应优先修改参数源 `.m` 文件，避免直接修改随后会被覆盖的JSON文件。
+多时段主脚本运行时会先执行参数生成脚本，随后按当前单阶段或两阶段配置求解完整算例。代码保留典型日维度映射和历史结果热启动能力。维护参数时应优先修改参数源 `.m` 文件，避免直接修改随后会被覆盖的JSON文件。
 
 ## 当前默认多时段与场景参数
 
@@ -83,12 +83,13 @@ code/functions/optimization/solve_multiple_snapshot_planning.m
 code/functions/optimization/build_multiple_snapshot_deterministic_case.m
 code/functions/optimization/check_multiple_snapshot_deterministic_degradation.m
 code/functions/optimization/compare_multiple_snapshot_deterministic_results.m
-code/functions/optimization/solve_single_snapshot_planning.m
 code/functions/security/add_impedance_reconstruction_constraints.m
 code/functions/security/add_short_circuit_current_constraints.m
 code/functions/security/add_classic_scr_constraints.m
 code/functions/network/calculate_impedance_bounds.m
 code/functions/io/load_multiple_snapshot_case.m
+code/functions/equipment/configure_simulink_file_generation.m
+code/functions/equipment/configure_simulink_file_generation_from_model.m
 ```
 
 多时段主模型在每个典型日内使用同步机逐时状态的并集重构最大短路电流工况，使用状态交集重构最弱SCR工况。两类安全网络均不随风电场景复制。该聚合方式能控制模型规模，但相较逐时重构更保守，后续可进一步研究逐时安全约束或更紧的等价表达。
@@ -117,7 +118,12 @@ code/functions/io/load_multiple_snapshot_case.m
 code/
   scripts/system/      主运行脚本、路径解析与后台启动入口
   scripts/equipment/   设备级仿真与参数计算脚本
+  scripts/figure/      调试图和报告图生成脚本
+  functions/equipment/ Simulink设备仿真与生成目录配置函数
   functions/           数据加载、网络构建、优化、安全约束与结果输出
+simulink/
+  models/              Simulink模型文件
+  artifacts/           Simulink缓存、slprj和代码生成文件（Git忽略）
 data/
   params/              默认参数源脚本及生成后的JSON参数文件
 docs/                  模型文档、论文材料与环境说明

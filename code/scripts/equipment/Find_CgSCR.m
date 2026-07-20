@@ -34,6 +34,9 @@ function cfg = localDefaultConfig()
 
     cfg.workDir = workDir;
     cfg.modelName = 'Grid_Following_Inverters';
+    projectRoot = fileparts(fileparts(fileparts(workDir)));
+    cfg.modelDir = fullfile(projectRoot, 'simulink', 'models');
+    cfg.modelFile = fullfile(cfg.modelDir, [cfg.modelName, '.slx']);
     cfg.parameterScript = fullfile(workDir, 'Invert_Parameters.m');
     cfg.signalName = 'v_PCC_mag';
 
@@ -75,13 +78,18 @@ function result = localFindScrBoundary(cfg)
         error('Parameter script not found: %s', cfg.parameterScript);
     end
 
-    modelFile = fullfile(cfg.workDir, [cfg.modelName, '.slx']);
-    if ~isfile(modelFile)
-        error('Model file not found: %s', modelFile);
+    if ~isfile(cfg.modelFile)
+        error('Model file not found: %s', cfg.modelFile);
     end
 
     localLoadBaseParameters(cfg);
-    load_system(cfg.modelName);
+    projectRoot = fileparts(cfg.modelDir);
+    equipmentDir = fullfile(projectRoot, 'code', 'functions', 'equipment');
+    if isempty(which('configure_simulink_file_generation'))
+        addpath(equipmentDir);
+    end
+    fileGenerationCleanup = configure_simulink_file_generation(projectRoot); %#ok<NASGU>
+    load_system(cfg.modelFile);
 
     try
         set_param(cfg.modelName, 'ReturnWorkspaceOutputs', 'on');

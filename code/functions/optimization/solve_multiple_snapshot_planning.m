@@ -372,8 +372,10 @@ for d = 1:D
     X_diag_SCR_d = Z_SCR_imag_d(scr_diagonal_indices);
     X_diag_SCR = [X_diag_SCR, X_diag_SCR_d]; %#ok<AGROW>
     C_scr = [C_scr, add_classic_scr_constraints( ...
-        CONF, ones(NGFL,1), X_diag_SCR_d, PN_GFL_rated_pu), ...
-        sum(u_SG_SCR(:,d)) + sum(u_GFM_mod_table) >= 1];
+        CONF, ones(NGFL,1), X_diag_SCR_d, PN_GFL_rated_pu)];
+    if CONF.Require_Source_Online
+        C_scr = [C_scr, sum(u_SG_SCR(:,d)) + sum(u_GFM_mod_table) >= 1];
+    end
 end
 
 %% 5. 构造目标函数
@@ -507,8 +509,8 @@ Y_GFM_SCC_Node = CONF.GFM_Module_Loc_Mat*(value_u_GFM_mod_table.* ...
 SCC_0 = [];
 SCC_1 = zeros(N,D);
 for d = 1:D
-    Y_SG_SCC_Node_d = (NET.Gen_Loc_Mat*value_u_G_SCC(:,d))* ...
-        (1/(1i*CONF.Xd_Gen));
+    Y_SG_SCC_Node_d = NET.Gen_Loc_Mat*(value_u_G_SCC(:,d).* ...
+        (1./(1i*CONF.Xd_Gen(:))));
     Y_SCC_Full_d = NET.Y0+spdiags( ...
         Y_SG_SCC_Node_d+Y_GFM_SCC_Node,0,N,N);
     if rcond(full(Y_SCC_Full_d)) < 1e-10

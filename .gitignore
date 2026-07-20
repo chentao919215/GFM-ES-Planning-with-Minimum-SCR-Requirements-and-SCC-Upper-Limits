@@ -11,6 +11,7 @@ results/
 # Simulink generated caches
 slprj/
 *.slxc
+simulink/artifacts/
 
 # Local reference papers and exported document drafts
 docs/**/*.pdf

@@ -195,7 +195,7 @@ Zg  = Vg^2/(S_base*SCR);
 Lg  = Zg/(2*pi*f);
 Lij = (SCR/MISCR-1)*Lg;
 % Rij = (SCR/MISCR-1)*Rg;
-t_close = 0.05;
+t_close = 0;
 
 % PLL参数
 PLL = [];
@@ -213,11 +213,31 @@ fs = 10e3;
 
 % 功率外环参数
 PQ = [];
-PQ.Pref = S_base;
+PQ.Pref = S_base/2;
 PQ.Qref = 0;
 PQ.step_time_P = 0.15;
 PQ.step_time_Q = 0.2;
 PQ.v_lpf_fc = 200;
 PQ.vdq_eps  = (0.05*sqrt(2/3)*Vg)^2;
+
+% 功率外环电流参考值选择
+% 0: 使用原有功率外环输出；1: 使用手动电流参考值。
+Manual_Current_Ref = 1;
+Id_ref_manual = 0.8;                % 手动基准电流 / p.u.
+Iq_ref_manual = 0;                  % 手动基准电流 / p.u.
+
+%% GFL LVRT 与四象限无功优先限流参数
+% 变流器电流基准与额定电流均采用 p.u.；模型内部电流信号为 A。
+I_N = 1.0;                         % 额定电流 / p.u.
+I_limit = 1.2;                     % 电流限值 / p.u.
+V_LVRT_max = 0.90;                 % LVRT 启动电压阈值 / p.u.
+V_LVRT_min = 0.20;                 % 附加无功电流饱和电压阈值 / p.u.
+K_q_LVRT = 1.5;                    % LVRT 无功电流斜率 / (p.u./p.u.)
+Delta_Iq_LVRT_max = K_q_LVRT * ...
+    (V_LVRT_max - V_LVRT_min) * I_N; % 最大附加无功电流 / p.u.
+
+% 与现有 PQ 外环的物理量单位衔接：电压为相电压峰值，电流为 A。
+I_base = S_base/(sqrt(3)*V_base);
+V_base_phase = sqrt(2/3)*V_base;
 
 clearvars Ki_suggested Kp_suggested

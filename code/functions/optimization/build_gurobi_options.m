@@ -62,7 +62,12 @@ else
     % 交互运行时保留求解器输出，并在当前工作目录写出日志
     ops.gurobi.OutputFlag      = 1;
     ops.gurobi.LogToConsole    = 1;
-    ops.gurobi.LogFile         = fullfile(pwd, 'gurobi_run.log');
+    project_root = fileparts(fileparts(fileparts(fileparts(mfilename('fullpath')))));
+    results_dir = fullfile(project_root, 'results');
+    if ~isfolder(results_dir)
+        mkdir(results_dir);
+    end
+    ops.gurobi.LogFile         = fullfile(results_dir, 'gurobi_run.log');
 end
 
 function value = get_option(options, field_name, default_value)
@@ -84,8 +89,6 @@ function options = get_mcp_longrun_options()
 options = struct();
 if isappdata(0, 'multiple_snapshot_mcp_gurobi_options')
     options = getappdata(0, 'multiple_snapshot_mcp_gurobi_options');
-elseif isappdata(0, 'single_snapshot_mcp_gurobi_options')
-    options = getappdata(0, 'single_snapshot_mcp_gurobi_options');
 end
 
 end

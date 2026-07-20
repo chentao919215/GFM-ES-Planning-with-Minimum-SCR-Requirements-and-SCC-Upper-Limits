@@ -1308,8 +1308,6 @@
       2,
       2
     ],
-    "LoadProfileSource": "MOST ex_load_profile",
-    "WindProfileSource": "MOST ex_wind_profile_d",
     "WindScenarios": {
       "Count": 3,
       "Names": [
@@ -1326,9 +1324,7 @@
         0.8,
         1,
         1.2
-      ],
-      "GenerationMode": "scale_base_profiles",
-      "GFL_Available_P_MW": []
+      ]
     },
     "LoadFactor": [
       0.94444222222222229,
@@ -3997,12 +3993,12 @@
   "Xd_Gen": 0.04,
   "GenCostLoading": 0.05,
   "Gen_Pmin_MW": [
-    4,
-    4,
-    2.5,
-    2.75,
-    1.5,
-    2
+    16,
+    16,
+    10,
+    11,
+    6,
+    8
   ],
   "GenCostBreakpoints": [
     0,
@@ -4035,20 +4031,20 @@
       8
     ],
     "MinUp_Periods": [
-      2,
-      2,
-      2,
-      2,
-      2,
-      2
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
     ],
     "MinDown_Periods": [
-      2,
-      2,
-      2,
-      2,
-      2,
-      2
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
     ],
     "Startup_Cost": [
       8.32,
@@ -4173,7 +4169,7 @@
   },
   "I_limit_kA": 12.25,
   "SCR_min": 3,
-  "Require_Source_Online": false,
+  "Require_Source_Online": true,
   "KZ": 1000,
   "ZBoundMargin": 0.005,
   "ERR_TOL_FACTOR": 1E-6,
@@ -4185,19 +4181,18 @@
     "Heuristics": 0.2,
     "NoRelHeurWork": 0,
     "ObjectiveScale": 100000,
-    "UseLatestMIPStart": false,
     "TwoStage": {
       "Enabled": true,
       "Stage1": {
         "Name": "feasible-search",
-        "TimeLimit": 1800,
+        "TimeLimit": 300,
         "MIPGap": 0.3,
         "MIPFocus": 1,
         "Heuristics": 0.2
       },
       "Stage2": {
         "Name": "optimality-proof",
-        "TimeLimit": 7200,
+        "TimeLimit": 1800,
         "MIPGap": 0.005,
         "MIPFocus": 3,
         "Heuristics": 0.01,

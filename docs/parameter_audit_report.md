@@ -4,7 +4,7 @@
 
 审计范围：`code/`、`data/params/` 中实际用于案例加载、网络构建、安全约束、优化建模和求解器配置的参数。审计为只读；本文件是本次唯一新增文件。参数表中的“派生参数”仍保留，是为了明确单位换算、缩放和公式计算链路；决策变量、结果变量和普通矩阵中间量不作为非派生参数重复列出。
 
-默认算例存在两套口径：单时刻文件 `single_snapshot_default_params.json` 与多时段随机文件 `multiple_snapshot_default_params.json`。以下凡标注“单时刻/多时段”的取值，均以对应 JSON 当前内容为准；多时段随机模型是本项目目标模型。
+当前项目以多时段随机模型为唯一目标模型，以下参数均以 `multiple_snapshot_default_params.json` 及其生成脚本为准。
 
 ## 1. 参数总表
 
@@ -16,7 +16,7 @@
 |`mpc.gencost(:,5:7)`|`data/params/multiple_snapshot_default_params.json:1214-1269`；读取：`code/functions/network/build_multiple_snapshot_network.m:23-25`|同步机二次、一次、常数成本系数 `a,b,c`|`(0.02,2,0),(0.0175,1.75,0),(0.0625,1,0),(0.00834,3.25,0),(0.025,3,0),(0.025,3,0)`|成本/MW²、成本/MW、成本|原始；运行时常数项强制为 0|系统参数|MATPOWER case30；`load_*_snapshot_case.m` 将 `gencost(:,7)` 置零|否|是|需要文献支撑；明确成本货币/时间口径|
 |`base_MVA`|生成：`data/params/generate_multiple_snapshot_default_params.m:10-15`；JSON：`multiple_snapshot_default_params.json:1271`|系统基准容量 `S_base`|100|MVA|原始|系统参数|MATPOWER case30|否|是|保留|
 |`base_kV, base_kA, base_O`|生成：`data/params/generate_multiple_snapshot_default_params.m:13-15`；JSON：`1272-1274`|基准电压、电流、阻抗|135；0.4276668661；182.25|kV、kA、Ω|派生|系统参数|由 `base_MVA` 与 `mpc.bus(1,10)` 公式计算|是|是|人工确认 `base_kV=135` 是否与该 case 的电压等级一致|
-|`BranchScale.r/x/b`|`multiple_snapshot_default_params.json:3992-3995`；生成：`generate_multiple_snapshot_default_params.m:42-45`|线路参数修正系数|`r=1.75,x=1.75,b=4/7≈0.5714286`；单时刻为 `2,2,0.5`|无量纲|原始|系统参数|人为设定|否（作用于标幺值）|是|需要文献支撑/灵敏度分析|
+|`BranchScale.r/x/b`|`multiple_snapshot_default_params.json:3992-3995`；生成：`generate_multiple_snapshot_default_params.m:42-45`|线路参数修正系数|`r=1.75,x=1.75,b=4/7≈0.5714286`|无量纲|原始|系统参数|人为设定|否（作用于标幺值）|是|需要文献支撑/灵敏度分析|
 |`Gen_Pmin_MW`|`multiple_snapshot_default_params.json:3999-4005`；生成：`generate_multiple_snapshot_default_params.m:53-54`|同步机最小稳定有功出力|`[4,4,2.5,2.75,1.5,2]`|MW|派生|UC参数|由 `0.05*mpc.gen(:,9)`|否|是|需要文献支撑；确认 5% 是否适用于全部机组|
 |`Xd_Gen`|`multiple_snapshot_default_params.json:3997`；生成：`generate_multiple_snapshot_default_params.m:48-50`|同步机次暂态/等效短路电抗 `X''_d`（代码注释称暂态电抗）|0.04|标幺（系统基准）|原始|安全参数|人为设定|需确认设备基准到系统基准换算|是|需要文献支撑；统一“次暂态/暂态”术语|
 |`GenCostLoading`|`multiple_snapshot_default_params.json:3998`；生成：`generate_multiple_snapshot_default_params.m:49-51`|用于生成固定成本常数项的负荷/出力比例|0.05|无量纲|原始|系统参数|人为设定|否|是|需要文献支撑/灵敏度分析|
@@ -34,25 +34,24 @@
 |`GFL_WG.PN_MW`、`GFL_Built_Nodes`|`multiple_snapshot_default_params.json:4070-4082`；生成：`generate_multiple_snapshot_default_params.m:72-78,84-85`|已建 GFL-WG 接入节点与额定功率|节点 `[11,18]`；每站 60|节点/MW|原始|GFL-WG参数|额定功率另换算为标幺|是|需要文献/算例设定说明|
 |`GFL_WG.I_Post_Multiplier`|`multiple_snapshot_default_params.json:4072`|GFL 故障后电流倍数|3|倍额定电流|原始|安全参数|由 `PN/Base_MVA` 换算系统标幺电流|是|是|需要文献支撑/灵敏度分析|
 |`GFL_WG.Curtailment_Cost_per_MWh`|`multiple_snapshot_default_params.json:4073`；生成：`generate_multiple_snapshot_default_params.m:74-78`|弃风惩罚成本|30|成本/MWh|原始|GFL-WG参数|多时段按典型日天数和场景概率累计|是|是|需要文献/市场口径支撑|
-|`GFM_Candidates`、`GFM_Modules.Bus/ModuleIndex`|`multiple_snapshot_default_params.json:4075-4102`；生成：`generate_multiple_snapshot_default_params.m:80-93`|GFM-ES 候选节点、模块位置和顺序|多时段候选节点 `[9,15,19]`；模块 6 个，节点 `[9,9,15,15,19,19]`，序号 `[1,2,1,2,1,2]`；单时刻候选 `[9,15,20,27]`、模块 8 个|节点/序号|原始|GFM-ES参数|人为设定|否|是|需要人工确认；单/多时段候选集差异必须解释|
+|`GFM_Candidates`、`GFM_Modules.Bus/ModuleIndex`|`multiple_snapshot_default_params.json:4075-4102`；生成：`generate_multiple_snapshot_default_params.m:80-93`|GFM-ES 候选节点、模块位置和顺序|候选节点 `[9,15,19]`；模块 6 个，节点 `[9,9,15,15,19,19]`，序号 `[1,2,1,2,1,2]`|节点/序号|原始|GFM-ES参数|人为设定|否|是|需要人工确认|
 |`MaxModulesPerCandidate/N_Module_Max/EnforceSequentialBuild`|`multiple_snapshot_default_params.json:4085-4087`|每候选节点模块上限、全局模块投建上限、顺序投建规则|2；4；true|模块/布尔|原始|GFM-ES参数|人为设定|否|是|需要文献或工程约束依据|
 |`GFM_Modules.PN_MW/Rated_Energy_MWh`|`multiple_snapshot_default_params.json:4104-4126`；生成：`generate_multiple_snapshot_default_params.m:95-104`|模块额定功率/能量，额定时长 `E/P`|功率每模块 30 MW；能量每模块 60 MWh；额定时长 2 h|MW/MWh/h|功率、能量原始；时长派生|GFM-ES参数|时长由 `Rated_Energy_MWh/PN_MW`；标幺功率由除以 100 MVA|是|是|需要工程/文献支撑；确认“2 h”是否真实设备配置|
 |`Annual_Cost_Power_per_MW/Annual_Cost_Energy_per_MWh`|`multiple_snapshot_default_params.json:4112-4134`；生成：`generate_multiple_snapshot_default_params.m:97-110`|GFM-ES 年化功率成本和能量成本|9600、37120|成本/(MW·年)、成本/(MWh·年)|原始|GFM-ES参数|直接给定；不是模型内贴现计算|否|是|需要文献/报价支撑；核查货币和年化口径|
 |`Cost_Conv_GFM`|`multiple_snapshot_default_params.json:4141-4147`；生成：`generate_multiple_snapshot_default_params.m:114-117`|每模块年化投建成本|2,515,200|成本/年·模块|派生|GFM-ES参数|`9600×30+37120×60`|否|是|保留公式；避免与一次性 CAPEX 混淆|
 |`Charge/Discharge_Efficiency`、`SOC_Min/Initial/Max`|`multiple_snapshot_default_params.json:4136-4140`；生成：`generate_multiple_snapshot_default_params.m:100-112`|充放电效率、SOC 边界与初值|0.9、0.9；0.1、0.5、0.9|无量纲|原始|GFM-ES参数|SOC 乘装机能量；放电递推除以效率|是|是|需要工程/文献支撑和灵敏度分析|
 |`GFM_Modules.I_Post_Multiplier`|`multiple_snapshot_default_params.json:4149-4155`|GFM-ES 故障电流倍数|3|倍额定电流|原始|安全参数|故障电流进入系统标幺并叠加到约束|是|是|需要文献支撑|
-|`GFM_Modules.X_GFM_res/X_GFM_vir`|`multiple_snapshot_default_params.json:4157-4171`；生成：`generate_multiple_snapshot_default_params.m:122-127`|GFM 正常运行电抗/虚拟电抗|`X_res=0.1333333`；`X_vir=0.9777778`，系统标幺；单时刻为 0.0666667、1.0444444|标幺|派生（设备值换算后存储）|安全参数|设备级 0.04 等乘 `base_MVA/PN_MW`，虚拟电抗由故障倍数与电阻公式得出|是|是|需要文献支撑；确认代码“阻抗/电抗”命名和电流模型一致|
-|`I_limit_kA`、`SCR_min`|`multiple_snapshot_default_params.json:4174-4176`；单时刻：`single_snapshot_default_params.json:1390-1392`|短路电流上限、经典 SCR 下限|多时段 12.25 kA、3；单时刻 11.5 kA、3|kA、无量纲|原始|安全参数|`I_limit_kA/Base_kA` 转系统标幺；SCR 用 `PN_pu·X`|是|是|需要文献/电网规范支撑；单/多时段差异需解释|
-|`Require_Source_Online`|`multiple_snapshot_default_params.json:4176`；单时刻：`single_snapshot_default_params.json:1392`|是否强制至少一个同步机或 GFM 模块在线|多时段 false；单时刻 true|布尔|原始|安全参数|无|是|需要人工确认；直接改变全停同步机可行域|
+|`GFM_Modules.X_GFM_res/X_GFM_vir`|`multiple_snapshot_default_params.json:4157-4171`；生成：`generate_multiple_snapshot_default_params.m:122-127`|GFM 正常运行电抗/虚拟电抗|`X_res=0.1333333`；`X_vir=0.9777778`，系统标幺|标幺|派生（设备值换算后存储）|设备级 0.04 等乘 `base_MVA/PN_MW`，虚拟电抗由故障倍数与电阻公式得出|是|是|需要文献支撑；确认代码“阻抗/电抗”命名和电流模型一致|
+|`I_limit_kA`、`SCR_min`|`multiple_snapshot_default_params.json:4174-4176`|短路电流上限、经典 SCR 下限|12.25 kA、3|kA、无量纲|原始|安全参数|`I_limit_kA/Base_kA` 转系统标幺；SCR 用 `PN_pu·X`|是|是|需要文献/电网规范支撑|
+|`Require_Source_Online`|`multiple_snapshot_default_params.json:4176`|是否强制至少一个同步机或 GFM 模块在线|false|布尔|原始|安全参数|无|是|需要人工确认；直接改变全停同步机可行域|
 |`KZ`、`ERR_TOL_FACTOR`、`CONF.ERR_TOL`|`multiple_snapshot_default_params.json:4177,4179`；读取：`load_multiple_snapshot_case.m:108-110`；约束：`add_impedance_reconstruction_constraints.m:63-70`|阻抗元素数值缩放、误差因子、绝对容差|KZ=1000；因子=1e-6；实际 `ERR_TOL=0.001`|无量纲/缩放阻抗单位|前两项原始，ERR_TOL 派生|数值参数|由乘法计算；输出阻抗再除 KZ|是|是|数值合理性验证；报告中明确缩放前后口径|
-|`ZBoundMargin`|`multiple_snapshot_default_params.json:4178`；`calculate_impedance_bounds.m:59-67,128-166`|阻抗枚举上下界外扩安全裕度|多时段 0.005；单时刻 0.05|比例|原始|数值参数|作用于由枚举极值生成的上下界|否|是|需要灵敏度分析；单/多时段差异需解释|
+|`ZBoundMargin`|`multiple_snapshot_default_params.json:4178`；`calculate_impedance_bounds.m:59-67,128-166`|阻抗枚举上下界外扩安全裕度|0.005|比例|原始|数值参数|作用于由枚举极值生成的上下界|否|是|需要灵敏度分析|
 |阻抗边界、`rcond` 阈值|`calculate_impedance_bounds.m:31,100,110,226-229`|McCormick 连续变量上下界和可逆性筛选|边界由全部同步机/GFM 组合枚举计算；`rcond<1e-10`（安全边界）、初始 Kron 消元 `rcond<1e-12`|标幺/缩放标幺|派生/数值规则|数值参数|Z 边界乘 KZ；阈值无单位|是|是|需要合理性验证；保留枚举覆盖率与有效工况数|
 |McCormick `X_lower/X_upper`|`code/functions/optimization/add_binary_product_bounds.m:1-7`；调用：`add_impedance_reconstruction_constraints.m:33-36,50-53`|二元变量与连续阻抗变量乘积线性化界|没有独立手工大 M；使用 `Z_bounds.real/imag_min/max`|缩放标幺|派生|数值参数|由阻抗组合枚举加裕度提供|是|是|保留；增加边界有效性/松弛度验证|
 |硬编码数值容差|`calculate_impedance_bounds.m:240`；`calculate_short_circuit_currents.m:15,34`；`solve_multiple_snapshot_planning.m:512`|零除保护、边界最小 padding、矩阵可逆性|`1e-6`；`1e-12`；`1e-10` 等|无量纲|原始/数值规则|数值参数|无|可能影响边界/可行性|数值合理性验证；集中管理并记录|
 |`Solver.Threads/MIPGap/TimeLimit/MIPFocus/Heuristics/NoRelHeurWork`|`multiple_snapshot_default_params.json:4180-4188`；应用：`build_gurobi_options.m:25-32`|Gurobi 线程、相对 MIP 间隙、时间上限和搜索策略|0；0.005；600 s；1；0.2；0|—/%/s|原始|求解器参数|无；后台入口可覆盖|影响求解时间和“最优性证明”，通常不改理论最优解但可能改截止时解|合理性验证，不需文献支撑|
 |`Solver.TwoStage`|`multiple_snapshot_default_params.json:4189-4205`；阶段控制：`code/scripts/system/run_multiple_snapshot_planning.m:112-132`|两阶段可行搜索/最优性证明|启用；阶段1 1800 s、MIPGap 0.3、Focus 1；阶段2 7200 s、MIPGap 0.005、Focus 3、ConcurrentMIP 2|s/%/枚举|原始|求解器参数|无|影响运行时间、停止状态和结果可复现性|合理性验证；论文报告实际终止状态|
 |`ObjectiveScale`|`multiple_snapshot_default_params.json:4187`；读取：`load_multiple_snapshot_case.m:117`；目标：`solve_multiple_snapshot_planning.m:424`|目标函数数值缩放|100000|无量纲|原始|数值参数|年化成本除以该量级，最优解理论上不变|是|数值稳定性相关|保留并验证缩放不改变解|
-|`AnnualHours`|`single_snapshot_default_params.json:1283`；读取：`load_single_snapshot_case.m:30-35`|单时刻运行成本年化小时数|8760|h/年|原始|GFM-ES参数|单时刻成本乘年化小时；多时段模型不读取该字段|是|是|需要人工确认单时刻与多时段年化口径|
 
 ### IEEE-30 原始数据补充
 
@@ -64,7 +63,7 @@
 
 1. `BranchScale.r/x/b`：对潮流、阻抗、SCC/SCR 和线路约束同时起作用，且与标准 IEEE-30 已不一致。
 2. `Xd_Gen=0.04`：代码注释称“暂态电抗”，用户目标要求次暂态电抗，物理含义需统一。
-3. `I_limit_kA=12.25`：直接决定 SCC 安全可行域，且单时刻为 11.5 kA。
+3. `I_limit_kA=12.25`：直接决定 SCC 安全可行域。
 4. `SCR_min=3`：直接决定 GFL-WG 接入安全下限，需有标准或文献依据。
 5. GFM `X_GFM_res/X_GFM_vir`：同时影响正常运行导纳、故障限流和阻抗重构。
 6. GFM `I_Post_Multiplier=3` 与 GFL `I_Post_Multiplier=3`：故障电流贡献的核心假设。
@@ -79,7 +78,6 @@
 - `Xd_Gen`、GFM 电抗：设备标幺值乘 `base_MVA/PN_MW` 的换算只在 GFM 生成脚本中显式体现；同步机电抗没有设备基准字段。
 - `Ramp_*_MW_per_Hour` 与 2 h 时段：模型乘时段长度，最小开停机时间则用“时段数”，两者需要在论文中同时说明。
 - `Annual_Cost_*`、`Cost_Conv_GFM`、`UC` 成本和弃风成本：代码以年化成本/年、每次成本、每 MWh 成本混合，必须明确货币、年度和典型日权重口径。
-- 单时刻 `AnnualHours=8760` 与多时段 `TypicalDayWeights_Days` 的年化方式不同；不能直接比较两个算例的目标值而不做口径说明。
 
 ### 2.3 可能属于人为设定但目前注释/依据不足的参数
 
@@ -106,5 +104,4 @@
 2. 未发现 GFM-ES 寿命、贴现率或 CRF 计算参数；成本字段已经是“Annual_Cost_*”，所以当前模型是直接读取年化成本，不是由寿命和贴现率现场年化。
 3. 未发现独立的手工大 M 参数；阻抗乘积的上下界由所有允许同步机/GFM 投运组合枚举，并通过 `ZBoundMargin` 外扩后用于 McCormick 线性化。
 4. 未发现单独的电压支撑强度阈值；当前安全参数主要是 SCC 电流上限、经典 SCR 下限、故障后电流倍数和阻抗/导纳参数。
-5. 单时刻与多时段默认文件在候选节点、模块数量、线路修正、SCC 上限、源在线要求和数值裕度上存在差异，不能把它们视为同一组参数的不同维度。
 6. `data/params/generate_multiple_snapshot_default_params.m` 是可读参数源脚本，JSON 是运行时读取文件；后续若调整参数，应保持二者同步并重新生成 JSON。

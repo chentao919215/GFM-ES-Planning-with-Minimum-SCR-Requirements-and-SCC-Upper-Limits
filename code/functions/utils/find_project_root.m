@@ -31,5 +31,5 @@ function tf = is_project_root(candidate)
 
 tf = isfolder(fullfile(candidate, 'code', 'functions')) && ...
      isfolder(fullfile(candidate, 'data', 'params')) && ...
-     isfile(fullfile(candidate, 'data', 'params', 'single_snapshot_default_params.json'));
+     isfile(fullfile(candidate, 'data', 'params', 'multiple_snapshot_default_params.json'));
 end

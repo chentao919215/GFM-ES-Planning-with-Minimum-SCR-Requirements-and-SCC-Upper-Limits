@@ -63,8 +63,9 @@ Y_ft   = sparse(fb,tb,-y,N,N);
 Y_tf   = sparse(tb,fb,-y,N,N);
 NET.Y0 = Y_ff+Y_tt+Y_ft+Y_tf;
 
-% 同步机内电势支路等效为节点接地导纳。
-Y_SG_Node    = (NET.Gen_Loc_Mat*ones(G,1)).*(1/(1i*CONF.Xd_Gen));
+% 同步机内电势支路等效为节点接地导纳；每台机组允许使用独立次暂态电抗。
+Y_SG_Unit   = 1./(1i*CONF.Xd_Gen(:));
+Y_SG_Node   = NET.Gen_Loc_Mat*Y_SG_Unit;
 NET.Y_SG_Add = sparse(1:N,1:N,Y_SG_Node,N,N);
 
 %% 4. 构造Kron降阶安全网络
@@ -87,14 +88,13 @@ NET.Safety_GFM_Module_Loc_Mat = ...
     CONF.GFM_Module_Loc_Mat(safety_nodes,:);
 NET.Y0_Safety = local_kron_reduce(NET.Y0,safety_nodes,eliminated_nodes);
 
-Y_SG_Node_Safety = (NET.Safety_Gen_Loc_Mat*ones(G,1)).* ...
-    (1/(1i*CONF.Xd_Gen));
+Y_SG_Node_Safety = NET.Safety_Gen_Loc_Mat*Y_SG_Unit;
 NET.Y_SG_Add_Safety = sparse(1:NS,1:NS,Y_SG_Node_Safety,NS,NS);
 
 %% 5. 生成模块化GFM-ES导纳参数
 NET.B_gfm_mod      = -1./CONF.GFM_Module_X_res(:);
 NET.DeltaY_mod     = CONF.GFM_Module_DeltaY(:);
-NET.DeltaY_abs_mod = abs(NET.DeltaY_mod);
+NET.DeltaY_abs_mod = CONF.GFM_Module_DeltaY_abs(:);
 
 end
 

@@ -37,9 +37,11 @@ C_imp = [C_imp, add_binary_product_bounds( ...
 C_imp = [C_imp, add_binary_product_bounds( ...
     W_SGZ_R,Z_SG_real,U_SG_Row,Z_SG_real_L,Z_SG_real_U)];
 
-G_sus = -1/CONF.Xd_Gen;
-W_sum_X = Gen_Loc_Mat*W_SGZ_X;
-W_sum_R = Gen_Loc_Mat*W_SGZ_R;
+% 同步机次暂态导纳按机组分别建模：y_g^G=-j/Xd_g。
+G_sus = -1./CONF.Xd_Gen(:);
+G_sus_mat = spdiags(G_sus,0,NET.G,NET.G);
+W_sum_X = Gen_Loc_Mat*(G_sus_mat*W_SGZ_X);
+W_sum_R = Gen_Loc_Mat*(G_sus_mat*W_SGZ_R);
 
 % GFM-ES模块贡献:W_GFMZ_*=u_GFM_mod.*Z(模块接入节点,:)。
 Z_GFM_real = GFM_Module_Loc_Mat'*Z_real;
@@ -62,8 +64,8 @@ W_gfm_sum_R = GFM_Module_Loc_Mat*(B_gfm_mat*W_GFMZ_R);
 % 将复数矩阵方程拆成实部和虚部两个线性约束组。
 Y0_R = real(NET.Y0_Safety);
 Y0_I = imag(NET.Y0_Safety);
-LHS_Real = Y0_R*Z_real - Y0_I*Z_imag - G_sus*W_sum_X - W_gfm_sum_X;
-LHS_Imag = Y0_R*Z_imag + Y0_I*Z_real + G_sus*W_sum_R + W_gfm_sum_R;
+LHS_Real = Y0_R*Z_real - Y0_I*Z_imag - W_sum_X - W_gfm_sum_X;
+LHS_Imag = Y0_R*Z_imag + Y0_I*Z_real + W_sum_R + W_gfm_sum_R;
 I_columns = sparse(column_indices,(1:N_col).',1,N_row,N_col)*CONF.KZ;
 
 C_imp = [C_imp, ...
