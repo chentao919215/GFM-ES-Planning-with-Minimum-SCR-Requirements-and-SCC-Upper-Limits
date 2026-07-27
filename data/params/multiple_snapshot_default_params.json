@@ -4065,8 +4065,12 @@
   },
   "GFL_WG": {
     "PN_MW": 60,
-    "I_Post_Multiplier": 3,
-    "Curtailment_Cost_per_MWh": 30
+    "Curtailment_Cost_per_MWh": 30,
+    "K_Q": 1.5,
+    "I_GFL_N": 1,
+    "V_LVRT_on": 0.9,
+    "V_LVRT_sat": 0.2,
+    "Delta_I_GFL": 1.05
   },
   "GFM_Candidates": [
     9,

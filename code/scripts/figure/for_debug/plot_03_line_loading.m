@@ -164,6 +164,7 @@ set(fig, 'Color', 'w', 'InvertHardcopy', 'off');
 drawnow;
 set(fig, 'Visible', 'on');
 savefig(fig, file_path);
+set(fig, 'Visible', 'off');
 png_path = strrep(file_path, '.fig', '.png');
 if exist('exportgraphics', 'file') ~= 0 || exist('exportgraphics', 'builtin') ~= 0
     exportgraphics(fig, png_path, 'Resolution', 600, ...
@@ -172,12 +173,12 @@ else
     set(fig, 'PaperPositionMode', 'auto');
     print(fig, png_path, '-dpng', '-r600');
 end
+close(fig);
 end
 
 function fig = new_figure(size_inches)
 fig = figure('Visible', 'off', 'Color', 'w', 'Units', 'inches', ...
-    'Position', [1 1 size_inches], ...
-    'CreateFcn', 'set(gcbf,''Visible'',''on'');');
+    'Position', [1 1 size_inches]);
 end
 
 function row = validation_row(name, value, tolerance, unit, passed)

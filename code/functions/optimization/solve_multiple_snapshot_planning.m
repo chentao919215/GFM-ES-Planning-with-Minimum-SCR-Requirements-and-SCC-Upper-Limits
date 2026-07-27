@@ -28,6 +28,7 @@ NGFL = NET.Safety_GFL_Count;
 M_GFM = CONF.GFM_Module_Count;
 N_GFM = CONF.GFM_Candidate_Count;
 N_GFM_Module = CONF.GFM_MaxModulesPerCandidate;
+C_Config = CONF.GFM_Config_Count;
 safety_nodes = NET.Safety_Retained_Nodes;
 gfl_original_nodes = NET.Safety_GFL_Original_Nodes;
 gfl_reduced_indices = NET.Safety_GFL_Reduced_Indices;
@@ -97,6 +98,7 @@ u_SG_stop  = binvar(G,D,T,'full');
 % 跨典型日和时段共享的GFM-ES模块投建状态。
 u_GFM_mod       = binvar(N_GFM,N_GFM_Module,'full');
 u_GFM_mod_table = u_GFM_mod(module_linear_idx);
+lambda_config   = binvar(C_Config,1,'full');
 
 % 候选节点聚合GFM-ES的逐场景逐时充放电状态，1表示充电，0表示放电。
 % 当充电功率和放电功率均为零时，该状态可取任一值。
@@ -125,6 +127,19 @@ Z_SCC_imag = sdpvar(NS,NS,D,'full');
 Z_SCR_real = sdpvar(NS,NGFL,D,'full');
 Z_SCR_imag = sdpvar(NS,NGFL,D,'full');
 
+% ver_2 intersection-state residual-voltage and LVRT feedback variables.
+V_F       = sdpvar(NS,NS,D,'full');
+V_F_0     = sdpvar(NS,NGFL,D,'full');
+V_F_lin   = sdpvar(NS,NGFL,D,'full');
+V_F_sat   = sdpvar(NS,NGFL,D,'full');
+delta_F_0 = binvar(NS,NGFL,D,'full');
+delta_F_lin = binvar(NS,NGFL,D,'full');
+delta_F_sat = binvar(NS,NGFL,D,'full');
+DeltaI_GFL = sdpvar(NS,NGFL,D,'full');
+Zeta_SG_V = sdpvar(G,NS,NS,D,'full');
+Zeta_GFM_V = sdpvar(M_GFM,NS,NS,D,'full');
+Chi_GFL = sdpvar(C_Config,NS,NGFL,D,'full');
+
 % 短路电流水平保守上界工况的阻抗重构与SCC辅助变量。
 W_SGZ_X_SCC  = sdpvar(G,NS,D,'full');
 W_SGZ_R_SCC  = sdpvar(G,NS,D,'full');
@@ -147,6 +162,10 @@ Cost_SG = sdpvar(G,D,K,T,'full');
 C_plan = [];
 C_plan = [C_plan, u_GFM_mod(~active_module_mask) == 0];
 C_plan = [C_plan, sum(u_GFM_mod_table) <= CONF.N_GFM_Module_Max];
+config_allowed = logical(Z_bounds.ConfigurationAllowed(:));
+C_plan = [C_plan, sum(lambda_config) == 1, ...
+    lambda_config(~config_allowed) == 0, ...
+    u_GFM_mod_table == CONF.GFM_Config_Module_Matrix.'*lambda_config];
 
 % 将已投建模块的额定功率与额定能量聚合到候选节点。
 P_GFM_Installed = GFM_Candidate_Module_Mat* ...
@@ -312,9 +331,37 @@ for d = 1:D
     C_aggregate = [C_aggregate, 1-u_SG_SCR(:,d) <= u_SG_off_sum_d];
 end
 
+% Remove configuration/union/actual combinations whose SCC or fault-transfer
+% impedance matrix could not be constructed during offline preprocessing.
+C_aggregate = [C_aggregate, add_forbidden_state_pair_constraints( ...
+    Z_bounds.InvalidStatePairs, ...
+    Z_bounds.StateCatalog.SynchronousStates, lambda_config, ...
+    u_SG_SCC, u_SG)];
+
 %% 4.4 阻抗矩阵重构约束
 % 两类工况共用降阶安全网络，并复用相同的逐元素阻抗上下界。
 % SCC逐典型日构造全部阻抗列，SCR逐典型日仅构造GFL-WG节点列。
+%% 4.4a ver_2 LVRT residual-voltage feedback and configuration transfer
+C_lvrt = add_gfl_lvrt_residual_constraints( ...
+    NET, CONF, u_SG_SCR, u_GFM_mod_table, V_F, V_F_0, V_F_lin, ...
+    V_F_sat, delta_F_0, delta_F_lin, delta_F_sat, DeltaI_GFL, ...
+    Zeta_SG_V, Zeta_GFM_V);
+
+C_fault_transfer = [];
+for d = 1:D
+    for n = 1:NS
+        for p_idx = 1:NGFL
+            delta_i_upper = CONF.Delta_I_GFL_pu_Node( ...
+                gfl_original_nodes(p_idx));
+            chi_vec = Chi_GFL(:,n,p_idx,d);
+            C_fault_transfer = [C_fault_transfer, ...
+                chi_vec >= 0, ...
+                chi_vec <= delta_i_upper*lambda_config, ...
+                sum(chi_vec) == DeltaI_GFL(n,p_idx,d)]; %#ok<AGROW>
+        end
+    end
+end
+
 C_impedance_SCC = [];
 C_impedance_SCR = [];
 C_scc = [];
@@ -332,6 +379,8 @@ CONF_Safety.GFM_Module_Loc_Mat = NET.Safety_GFM_Module_Loc_Mat;
 CONF_Safety.I_limit = CONF.I_limit(safety_nodes);
 CONF_Safety.I_post_GFL_Node = CONF.I_post_GFL_Node(safety_nodes);
 CONF_Safety.PN_GFL_pu_Node = PN_GFL_rated_pu_safety;
+CONF_Safety.I_GFL_N_pu_Node = CONF.I_GFL_N_pu_Node(safety_nodes);
+CONF_Safety.Delta_I_GFL_pu_Node = CONF.Delta_I_GFL_pu_Node(safety_nodes);
 X_diag_L = diag(Z_bounds.SCC.imag_min);
 X_diag_U = diag(Z_bounds.SCC.imag_max);
 % 从SCR阻抗列提取GFL-WG节点自阻抗，并严格采用场站额定功率。
@@ -364,10 +413,20 @@ for d = 1:D
         W_GFMZ_R_SCR(:,:,d), gfl_reduced_indices)];
 
     X_diag_SCC_d = diag(Z_SCC_imag_d);
+    Phi_GFL_d = [];
+    for n = 1:NS
+        phi_n = 0;
+        for p_idx = 1:NGFL
+            phi_n = phi_n + ...
+                Z_bounds.Tau_GFL_Scaled(:,n,p_idx).' * ...
+                Chi_GFL(:,n,p_idx,d);
+        end
+        Phi_GFL_d = [Phi_GFL_d; phi_n]; %#ok<AGROW>
+    end
     C_scc = [C_scc, add_short_circuit_current_constraints( ...
         CONF_Safety, u_GFL_Safety, u_GFM_mod_table, W_GFM_SCC(:,d), ...
         X_diag_SCC_d, DeltaY_abs_mod, PN_GFL_rated_pu_safety, ...
-        X_diag_L, X_diag_U)];
+        X_diag_L, X_diag_U, Phi_GFL_d)];
 
     X_diag_SCR_d = Z_SCR_imag_d(scr_diagonal_indices);
     X_diag_SCR = [X_diag_SCR, X_diag_SCR_d]; %#ok<AGROW>
@@ -418,7 +477,7 @@ end
 
 % 统一装配规划、运行、安全和成本约束。
 C = [C_plan, C_operation, C_aggregate, C_impedance_SCC, ...
-    C_impedance_SCR, C_scc, C_scr, C_cost];
+    C_impedance_SCR, C_lvrt, C_fault_transfer, C_scc, C_scr, C_cost];
 
 % C = [C_plan, C_operation, C_cost];
 
@@ -489,6 +548,18 @@ value_u_G_SCC = value(u_SG_SCC);
 value_u_G_SCR = value(u_SG_SCR);
 value_u_GFM_Mod = value(u_GFM_mod);
 value_u_GFM_Ch = value(u_GFM_ch);
+value_lambda_config = value(lambda_config);
+Diagnostics.ConfigurationSelection = value_lambda_config;
+Diagnostics.ConfigurationModuleStatus = CONF.GFM_Config_Module_Matrix;
+Diagnostics.ConfigurationCandidateStatus = CONF.GFM_Config_Candidate_Matrix;
+Diagnostics.ConfigurationAllowed = Z_bounds.ConfigurationAllowed;
+Diagnostics.ConfigurationModuleCount = CONF.GFM_Config_Module_Count;
+Diagnostics.ValidStatePairs = Z_bounds.ValidStatePairs;
+Diagnostics.InvalidStatePairs = Z_bounds.InvalidStatePairs;
+Diagnostics.Tau_GFL_Scaled = Z_bounds.Tau_GFL_Scaled;
+Diagnostics.StateCatalog = Z_bounds.StateCatalog;
+Diagnostics.LVRTResidualVoltage = value(V_F);
+Diagnostics.LVRTIncrementCurrent = value(DeltaI_GFL);
 
 % 阻抗矩阵在模型中经过CONF.KZ缩放，输出时还原到原始标幺尺度。
 Z_SCC_val = value(Z_SCC_real)/CONF.KZ + 1i*value(Z_SCC_imag)/CONF.KZ;

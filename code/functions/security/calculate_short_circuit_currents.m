@@ -18,7 +18,12 @@ for i = 1:N
     I_vs = Y_th - GFM_delta_node(i);
 
     % 已建GFL按电流源贡献计入短路电流
-    I_cs = (CONF.I_post_GFL_Node(i)+CONF.PN_GFL_pu_Node(i))*u_GFL(i);
+    if isfield(CONF,'I_GFL_N_pu_Node')
+        I_gfl_n = CONF.I_GFL_N_pu_Node(i);
+    else
+        I_gfl_n = CONF.PN_GFL_pu_Node(i);
+    end
+    I_cs = (CONF.I_post_GFL_Node(i)+I_gfl_n)*u_GFL(i);
 
     % 标幺短路电流换算为kA
     SCC_1(i) = (I_vs+I_cs)*CONF.Base_kA;

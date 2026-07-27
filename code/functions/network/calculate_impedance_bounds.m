@@ -1,258 +1,213 @@
 function Z_bounds = calculate_impedance_bounds(NET, CONF)
-%% 本函数功能是枚举离散投运组合并估计阻抗矩阵逐元素上下界。
-% 阻抗上下界用于二进制-连续变量乘积的McCormick线性化。
-% 同步机组合始终纳入全停状态；无电压源状态由Require_Source_Online剔除。
-% GFM-ES组合枚举满足模块投建规则的全部状态。
+%CALCULATE_IMPEDANCE_BOUNDS Enumerate ver_2 configuration/state combinations.
+%
+% The SCC state is the within-day synchronous-machine union state.  The
+% actual state is a sub-state of that union and is used to construct the
+% fault-transfer network.  Non-invertible combinations are retained in the
+% catalog as forbidden pairs and are never admitted by the optimization
+% model.
 
-% 多时段最终模型分别预处理SCC完整降阶阻抗矩阵与SCR的GFL-WG阻抗列。
-% 各典型日的设备状态可行域相同，因此逐元素上下界只枚举一次并由各典型日复用。
-if isfield(NET,'Y0_Safety')
-    Z_bounds = local_calculate_safety_bounds(NET,CONF);
-    return;
+if ~isfield(NET, 'Y0_Safety') || ~isfield(CONF, 'GFM_Config_Module_Matrix')
+    error('ver_2 impedance preprocessing requires the safety network and configuration catalog.');
 end
-
-%% 1. 生成离散投运组合
-N = NET.N;
-G = NET.G;
-
-sg_cases = local_build_sg_cases(G);
-gfm_cases = local_build_gfm_module_cases(CONF);
-
-%% 2. 枚举组合并记录阻抗矩阵元素极值
-real_min =  inf(N,N);
-real_max = -inf(N,N);
-imag_min =  inf(N,N);
-imag_max = -inf(N,N);
-valid_case_count = 0;
-
-Y_sg_unit  = 1./(1i*CONF.Xd_Gen(:));
-Y_gfm_mod = 1 ./ (1i*CONF.GFM_Module_X_res(:));
-
-for sg_idx = 1:size(sg_cases, 1)
-    sg_status = sg_cases(sg_idx,:).';
-    Y_sg_diag = NET.Gen_Loc_Mat * (sg_status .* Y_sg_unit);
-
-    for gfm_idx = 1:size(gfm_cases, 1)
-        gfm_status = gfm_cases(gfm_idx,:).';
-
-        if CONF.Require_Source_Online && ~any(sg_status) && ~any(gfm_status)
-            continue;
-        end
-
-        Y_gfm_diag = CONF.GFM_Module_Loc_Mat * (gfm_status .* Y_gfm_mod);
-
-        Y_case = NET.Y0 + sparse(1:N, 1:N, Y_sg_diag + Y_gfm_diag, N, N);
-
-        [Z_case, is_invertible] = local_inverse(Y_case);
-        if ~is_invertible
-            continue;
-        end
-        valid_case_count = valid_case_count + 1;
-        Z_real_case = CONF.KZ * real(Z_case);
-        Z_imag_case = CONF.KZ * imag(Z_case);
-
-        real_min = min(real_min, Z_real_case);
-        real_max = max(real_max, Z_real_case);
-        imag_min = min(imag_min, Z_imag_case);
-        imag_max = max(imag_max, Z_imag_case);
-    end
-end
-
-if valid_case_count == 0
-    error('No invertible equipment state was found for impedance bound calculation.');
-end
-
-%% 3. 添加安全裕度并输出上下界
-margin = CONF.ZBoundMargin;
-
-real_pad = local_padding(real_min, real_max, margin);
-imag_pad = local_padding(imag_min, imag_max, margin);
-
-real_lower = real_min - real_pad;
-real_upper = real_max + real_pad;
-imag_lower = imag_min - imag_pad;
-imag_upper = imag_max + imag_pad;
-
-Z_bounds = struct();
-Z_bounds.real_min = real_lower;
-Z_bounds.real_max = real_upper;
-Z_bounds.imag_min = imag_lower;
-Z_bounds.imag_max = imag_upper;
-
-end
-
-function Z_bounds = local_calculate_safety_bounds(NET,CONF)
-%% 分别计算SCC完整降阶阻抗矩阵与SCR所需阻抗列的逐元素上下界。
 
 NS = NET.Safety_N;
 G = NET.G;
-gfl_column_indices = NET.Safety_GFL_Reduced_Indices(:);
-NGFL = numel(gfl_column_indices);
+NGFL = NET.Safety_GFL_Count;
+gfl_columns = NET.Safety_GFL_Reduced_Indices(:);
+config_status = logical(CONF.GFM_Config_Module_Matrix);
+C = size(config_status,1);
 
-sg_cases = local_build_sg_cases(G);
-gfm_cases = local_build_gfm_module_cases(CONF);
+sg_states = local_build_binary_states(G);
+state_count = size(sg_states,1);
+Y_sg_unit = 1./(1i*CONF.Xd_Gen(:));
+Y_gfm_unit = 1./(1i*CONF.GFM_Module_X_res(:));
+
 scc_extrema = local_initialize_extrema(NS,NS);
 scr_extrema = local_initialize_extrema(NS,NGFL);
-valid_case_count = 0;
+tau_scaled = zeros(C,NS,NGFL);
+tau_seen = false(C,NS,NGFL);
+invalid_pairs = zeros(0,3); % [configuration, union-state, actual-state]
+valid_pairs = zeros(0,3);
+config_has_valid_pair = false(C,1);
 
-Y_sg_unit = 1./(1i*CONF.Xd_Gen(:));
-Y_gfm_mod = 1./(1i*CONF.GFM_Module_X_res(:));
-I_SCC = eye(NS);
-I_SCR = sparse(gfl_column_indices,(1:NGFL).',1,NS,NGFL);
+for c = 1:C
+    gfm_status = config_status(c,:).';
+    Y_gfm_diag = NET.Safety_GFM_Module_Loc_Mat*(gfm_status.*Y_gfm_unit);
 
-for sg_idx = 1:size(sg_cases,1)
-    sg_status = sg_cases(sg_idx,:).';
-    Y_sg_diag = NET.Safety_Gen_Loc_Mat*(sg_status.*Y_sg_unit);
-
-    for gfm_idx = 1:size(gfm_cases,1)
-        gfm_status = gfm_cases(gfm_idx,:).';
-        if CONF.Require_Source_Online && ~any(sg_status) && ~any(gfm_status)
+    % SCR uses the synchronous-machine intersection state, which can be a
+    % subset that is not itself one of the realized periods.  Bound every
+    % source-online, invertible configuration/state network independently.
+    for scr_idx = 1:state_count
+        u_scr = sg_states(scr_idx,:).';
+        if ~local_source_online(u_scr,gfm_status,CONF.Require_Source_Online)
             continue;
         end
+        Y_scr = NET.Y0_Safety + spdiags( ...
+            NET.Safety_Gen_Loc_Mat*(u_scr.*Y_sg_unit)+Y_gfm_diag,0,NS,NS);
+        [Z_scr, scr_ok] = local_inverse(Y_scr);
+        if scr_ok && local_valid_transfer_impedances(Z_scr,Z_scr)
+            scr_extrema = local_update_extrema( ...
+                scr_extrema,CONF.KZ*Z_scr(:,gfl_columns));
+        end
+    end
 
-        Y_gfm_diag = NET.Safety_GFM_Module_Loc_Mat* ...
-            (gfm_status.*Y_gfm_mod);
-        Y_case = NET.Y0_Safety + spdiags( ...
-            Y_sg_diag+Y_gfm_diag,0,NS,NS);
-        Y_case_full = full(Y_case);
-        if rcond(Y_case_full) < 1e-10
-            continue;
+    for union_idx = 1:state_count
+        u_union = sg_states(union_idx,:).';
+        if ~local_source_online(u_union,gfm_status,CONF.Require_Source_Online)
+            scc_ok = false;
+            Z_scc = [];
+        else
+            Y_scc = NET.Y0_Safety + spdiags( ...
+                NET.Safety_Gen_Loc_Mat*(u_union.*Y_sg_unit)+Y_gfm_diag,0,NS,NS);
+            [Z_scc,scc_ok] = local_inverse(Y_scc);
         end
 
-        valid_case_count = valid_case_count+1;
-        % SCC工况需要完整阻抗矩阵；SCR工况仅求解GFL-WG节点对应的列。
-        Z_SCC_case = Y_case_full\I_SCC;
-        Z_SCR_case = Y_case_full\full(I_SCR);
-        scc_extrema = local_update_extrema( ...
-            scc_extrema,CONF.KZ*Z_SCC_case);
-        scr_extrema = local_update_extrema( ...
-            scr_extrema,CONF.KZ*Z_SCR_case);
+        for actual_idx = 1:state_count
+            u_actual = sg_states(actual_idx,:).';
+            if any(u_actual > u_union)
+                continue;
+            end
+
+            if ~scc_ok || ~local_source_online( ...
+                    u_actual,gfm_status,CONF.Require_Source_Online)
+                invalid_pairs(end+1,:) = [c,union_idx,actual_idx]; %#ok<AGROW>
+                continue;
+            end
+
+            Y_fault = NET.Y0_Safety + spdiags( ...
+                NET.Safety_Gen_Loc_Mat*(u_actual.*Y_sg_unit)+Y_gfm_diag,0,NS,NS);
+            [Z_fault,fault_ok] = local_inverse(Y_fault);
+            if ~fault_ok || ~local_valid_transfer_impedances(Z_scc,Z_fault)
+                invalid_pairs(end+1,:) = [c,union_idx,actual_idx]; %#ok<AGROW>
+                continue;
+            end
+
+            valid_pairs(end+1,:) = [c,union_idx,actual_idx]; %#ok<AGROW>
+            config_has_valid_pair(c) = true;
+
+            Z_scc_scaled = CONF.KZ*Z_scc;
+            Z_fault_scaled = CONF.KZ*Z_fault;
+            scc_extrema = local_update_extrema(scc_extrema,Z_scc_scaled);
+            scr_extrema = local_update_extrema(scr_extrema, ...
+                Z_fault_scaled(:,gfl_columns));
+
+            % tau(c,n,p) is the scaled version of
+            % X_SCC(nn)*Z_fault(np)/Z_fault(nn).  Imaginary scalar-network
+            % values follow the model's x-dominant approximation.
+            x_scc = imag(diag(Z_scc));
+            x_fault = imag(diag(Z_fault));
+            z_fault_imag = imag(Z_fault);
+            for n = 1:NS
+                for p_idx = 1:NGFL
+                    p = gfl_columns(p_idx);
+                    ratio = z_fault_imag(n,p)/x_fault(n);
+                    candidate = CONF.KZ*x_scc(n)*max(0,abs(ratio));
+                    tau_scaled(c,n,p_idx) = max(tau_scaled(c,n,p_idx),candidate);
+                    tau_seen(c,n,p_idx) = true;
+                end
+            end
+        end
     end
 end
 
-if valid_case_count == 0
-    error('未找到Kron降阶导纳矩阵可逆的设备接入状态。');
+if ~any(config_has_valid_pair)
+    error('No invertible ver_2 configuration/state combination was found.');
+end
+
+% A configuration with no valid state pair cannot be selected.  Every
+% selectable configuration must also have a finite tau bound for every
+% fault/GFL-node pair.
+for c = 1:C
+    if config_has_valid_pair(c) && ~all(tau_seen(c,:,:),'all')
+        config_has_valid_pair(c) = false;
+    end
+end
+if ~any(config_has_valid_pair)
+    error('No GFM-ES configuration has a complete finite fault-transfer bound.');
 end
 
 Z_bounds = struct();
 Z_bounds.SCC = local_finalize_extrema(scc_extrema,CONF.ZBoundMargin);
 Z_bounds.SCR = local_finalize_extrema(scr_extrema,CONF.ZBoundMargin);
 Z_bounds.SCC.column_reduced_indices = (1:NS).';
-Z_bounds.SCR.column_reduced_indices = gfl_column_indices;
-Z_bounds.valid_case_count = valid_case_count;
+Z_bounds.SCR.column_reduced_indices = gfl_columns;
+Z_bounds.valid_case_count = size(valid_pairs,1);
 Z_bounds.typical_day_count = CONF.TypicalDayCount;
 Z_bounds.shared_across_typical_days = true;
+Z_bounds.Tau_GFL_Scaled = tau_scaled;
+Z_bounds.ConfigurationAllowed = config_has_valid_pair;
+Z_bounds.ValidStatePairs = valid_pairs;
+Z_bounds.InvalidStatePairs = invalid_pairs;
+Z_bounds.StateCatalog = struct( ...
+    'SynchronousStates',sg_states, ...
+    'StateDefinition','[union_state, actual_state], actual_state <= union_state');
 
 end
 
-function extrema = local_initialize_extrema(n_rows,n_columns)
-%% 初始化阻抗列实部、虚部极值。
+function states = local_build_binary_states(n)
+if n > 20
+    error('Synchronous-machine state enumeration is limited to at most 20 units.');
+end
+states = logical(dec2bin(0:(2^n-1))-'0');
+end
 
+function tf = local_source_online(u_sg,u_gfm,require_source)
+tf = ~require_source || any(u_sg) || any(u_gfm);
+end
+
+function [Z,is_invertible] = local_inverse(Y)
+Y_full = full(Y);
+if any(~isfinite(Y_full(:))) || rcond(Y_full) < 1e-10
+    Z = [];
+    is_invertible = false;
+    return;
+end
+Z = Y_full\eye(size(Y_full));
+is_invertible = all(isfinite(Z(:)));
+end
+
+function tf = local_valid_transfer_impedances(Z_scc,Z_fault)
+if isempty(Z_scc) || isempty(Z_fault)
+    tf = false;
+    return;
+end
+x_scc = imag(diag(Z_scc));
+x_fault = imag(diag(Z_fault));
+tf = all(isfinite(x_scc)) && all(isfinite(x_fault)) && ...
+    all(x_scc > 1e-10) && all(x_fault > 1e-10);
+end
+
+function extrema = local_initialize_extrema(n_rows,n_columns)
 extrema.real_min = inf(n_rows,n_columns);
 extrema.real_max = -inf(n_rows,n_columns);
 extrema.imag_min = inf(n_rows,n_columns);
 extrema.imag_max = -inf(n_rows,n_columns);
-
 end
 
 function extrema = local_update_extrema(extrema,Z_case)
-%% 使用一个可行设备接入状态更新阻抗列元素极值。
-
 extrema.real_min = min(extrema.real_min,real(Z_case));
 extrema.real_max = max(extrema.real_max,real(Z_case));
 extrema.imag_min = min(extrema.imag_min,imag(Z_case));
 extrema.imag_max = max(extrema.imag_max,imag(Z_case));
-
 end
 
 function bounds = local_finalize_extrema(extrema,margin)
-%% 对枚举得到的阻抗列元素上下界逐元素外扩安全裕度。
-
+if any(~isfinite(extrema.real_min(:))) || any(~isfinite(extrema.real_max(:))) || ...
+        any(~isfinite(extrema.imag_min(:))) || any(~isfinite(extrema.imag_max(:)))
+    error('Impedance bounds contain uninitialized entries.');
+end
 real_pad = local_padding(extrema.real_min,extrema.real_max,margin);
 imag_pad = local_padding(extrema.imag_min,extrema.imag_max,margin);
-
-bounds = struct();
 bounds.real_min = extrema.real_min-real_pad;
 bounds.real_max = extrema.real_max+real_pad;
 bounds.imag_min = extrema.imag_min-imag_pad;
 bounds.imag_max = extrema.imag_max+imag_pad;
-
 end
 
-function sg_cases = local_build_sg_cases(G)
-% 该函数生成同步机投运组合。
-sg_cases = dec2bin(0:(2^G-1))-'0';
-
-end
-
-function gfm_cases = local_build_gfm_module_cases(CONF)
-% 该函数生成所有允许的GFM-ES模块投建组合。
-
-n_modules = CONF.GFM_Module_Count;
-eligible_modules = (1:n_modules).';
-
-max_modules = min(floor(CONF.N_GFM_Module_Max), numel(eligible_modules));
-
-gfm_cases = false(1, n_modules);
-
-for k = 1:max_modules
-    combos = nchoosek(eligible_modules, k);
-
-    for row = 1:size(combos, 1)
-        status = false(1, n_modules);
-        status(combos(row,:)) = true;
-
-        if local_is_sequential_status(status, CONF)
-            gfm_cases = [gfm_cases; status]; %#ok<AGROW>
-        end
-    end
-end
-end
-
-function is_valid = local_is_sequential_status(status, CONF)
-% 该函数检查同一候选节点内的模块是否按序投建。
-
-if ~CONF.GFM_Module_Sequential
-    is_valid = true;
-    return;
-end
-
-module_bus = CONF.GFM_Module_Bus(:);
-module_order = CONF.GFM_Module_Order(:);
-unique_bus = unique(module_bus, 'stable');
-is_valid = true;
-
-for k = 1:numel(unique_bus)
-    idx = find(module_bus == unique_bus(k));
-    [~, order_idx] = sort(module_order(idx));
-    idx = idx(order_idx);
-    status_ordered = status(idx);
-
-    if any(status_ordered(2:end) > status_ordered(1:end-1))
-        is_valid = false;
-        return;
-    end
-end
-end
-
-function [Z, is_invertible] = local_inverse(Y)
-% 该函数仅对满足数值可逆条件的导纳矩阵计算逆矩阵。
-
-Y_full = full(Y);
-if rcond(Y_full) < 1e-10
-    Z = [];
-    is_invertible = false;
-else
-    Z = inv(Y_full);
-    is_invertible = true;
-end
-end
-
-function pad = local_padding(lower_bound, upper_bound, margin)
-% 该函数根据元素范围和绝对尺度生成上下界裕度。
-
-span = upper_bound - lower_bound;
-scale = max(abs(lower_bound), abs(upper_bound));
-pad = margin * max(span, scale);
-pad = max(pad, 1e-6);
+function pad = local_padding(lower_bound,upper_bound,margin)
+span = upper_bound-lower_bound;
+scale = max(abs(lower_bound),abs(upper_bound));
+pad = margin*max(span,scale);
+pad = max(pad,1e-6);
 end

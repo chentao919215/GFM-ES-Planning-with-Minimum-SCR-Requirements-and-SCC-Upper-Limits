@@ -75,8 +75,13 @@ params.UC.Shutdown_Cost              = 0.25*gen_cost_at_5pct;
 % Curtailment_Cost_per_MWh为单位弃风惩罚成本，单位为$/MWh。
 params.GFL_WG = struct();
 params.GFL_WG.PN_MW = 60;
-params.GFL_WG.I_Post_Multiplier = 3;
 params.GFL_WG.Curtailment_Cost_per_MWh = 30;
+% ver_2 GFL-WG LVRT parameters, expressed on the GFL-WG rated-power base.
+params.GFL_WG.K_Q = 1.5;
+params.GFL_WG.I_GFL_N = 1.0;
+params.GFL_WG.V_LVRT_on = 0.9;
+params.GFL_WG.V_LVRT_sat = 0.2;
+params.GFL_WG.Delta_I_GFL = 1.05;
 
 %% 4. GFM-ES规划参数
 % GFM_Candidates:允许投建GFM-ES的节点集合。

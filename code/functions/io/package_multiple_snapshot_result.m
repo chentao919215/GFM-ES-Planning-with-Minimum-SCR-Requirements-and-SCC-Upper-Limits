@@ -35,6 +35,14 @@ Result.u_G_Stop    = u_G_Stop;
 Result.u_G_SCC     = u_G_SCC;
 Result.u_G_SCR     = u_G_SCR;
 Result.u_GFM_Mod   = u_GFM_Mod;
+if isfield(Diagnostics,'ConfigurationSelection')
+    Result.lambda_c = Diagnostics.ConfigurationSelection;
+    Result.GFM_Config_Module_Status = Diagnostics.ConfigurationModuleStatus;
+    Result.GFM_Config_Allowed = Diagnostics.ConfigurationAllowed;
+    if isfield(Diagnostics,'ConfigurationCandidateStatus')
+        Result.GFM_Config_Candidate_Status = Diagnostics.ConfigurationCandidateStatus;
+    end
+end
 % 场景相关储能运行结果按[候选节点,典型日,场景,时段]保存，
 % P_GFM为[节点,典型日,场景,时段]全节点净注入功率。
 Result.P_GFM_Dis   = P_GFM_Dis;

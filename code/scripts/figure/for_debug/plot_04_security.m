@@ -124,8 +124,7 @@ Report.Validation = [validation_row('SCC_max_posthoc_relative_error', ...
 
 function fig = new_figure(size_inches)
 fig = figure('Visible', 'off', 'Color', 'w', 'Units', 'inches', ...
-    'Position', [1 1 size_inches], ...
-    'CreateFcn', 'set(gcbf,''Visible'',''on'');');
+    'Position', [1 1 size_inches]);
 end
 
 function save_figure_file(fig, file_path)
@@ -136,6 +135,7 @@ if ~endsWith(file_path, '.fig', 'IgnoreCase', true)
 end
 set(fig, 'Visible', 'on');
 savefig(fig, file_path);
+set(fig, 'Visible', 'off');
 png_path = strrep(file_path, '.fig', '.png');
 if exist('exportgraphics', 'file') ~= 0 || exist('exportgraphics', 'builtin') ~= 0
     exportgraphics(fig, png_path, 'Resolution', 600, 'BackgroundColor', 'white');
@@ -143,6 +143,7 @@ else
     set(fig, 'PaperPositionMode', 'auto');
     print(fig, png_path, '-dpng', '-r600');
 end
+close(fig);
 end
 
 function row = validation_row(name, value, tolerance, unit, passed)

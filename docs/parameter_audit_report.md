@@ -32,7 +32,7 @@
 |`LoadFactor`、`Load_P_MW`|`multiple_snapshot_default_params.json:1333-1345,1347-2668`；生成：`generate_multiple_snapshot_default_params.m:144-162`|逐时负荷倍率及节点-典型日-时段负荷|LoadFactor `[0.9444422,0.8333311,0.72222,0.6666644,0.7777756,0.8888867,0.9999978,1.1111089,1.1666644,1.1999978,1.0666644,0.9777756]`；完整 MW 张量在 JSON|无量纲/MW|派生|GFL-WG参数|由 MOST `ex_load_profile` 与 IEEE-30 基准负荷计算，再乘 Factor|是|是|需要保留数据版本/生成脚本和单位说明|
 |`WindScenarios.Count/Names/Probabilities/ScaleFactors/GenerationMode`|`multiple_snapshot_default_params.json:1313-1331`；生成：`generate_multiple_snapshot_default_params.m:32-38`|风电场景数、名称、概率、倍率和生成方式|3；low/base/high；`[0.25,0.5,0.25]`；`[0.8,1.0,1.2]`；`scale_base_profiles`|无量纲|原始|GFL-WG参数|基准轨迹由 MOST，场景为倍率生成|否|是|需要文献/统计依据；校验概率与场景相关性|
 |`GFL_WG.PN_MW`、`GFL_Built_Nodes`|`multiple_snapshot_default_params.json:4070-4082`；生成：`generate_multiple_snapshot_default_params.m:72-78,84-85`|已建 GFL-WG 接入节点与额定功率|节点 `[11,18]`；每站 60|节点/MW|原始|GFL-WG参数|额定功率另换算为标幺|是|需要文献/算例设定说明|
-|`GFL_WG.I_Post_Multiplier`|`multiple_snapshot_default_params.json:4072`|GFL 故障后电流倍数|3|倍额定电流|原始|安全参数|由 `PN/Base_MVA` 换算系统标幺电流|是|是|需要文献支撑/灵敏度分析|
+|`GFL_WG.Delta_I_GFL`|`multiple_snapshot_default_params.json:GFL_WG`；生成：`generate_multiple_snapshot_default_params.m:84-85`|GFL-WG LVRT 饱和增量电流，并用于故障节点饱和电流贡献|1.05|倍额定电流|原始|安全参数|按 `PN/Base_MVA` 换算系统标幺电流|是|是|需要文献支撑/灵敏度分析|
 |`GFL_WG.Curtailment_Cost_per_MWh`|`multiple_snapshot_default_params.json:4073`；生成：`generate_multiple_snapshot_default_params.m:74-78`|弃风惩罚成本|30|成本/MWh|原始|GFL-WG参数|多时段按典型日天数和场景概率累计|是|是|需要文献/市场口径支撑|
 |`GFM_Candidates`、`GFM_Modules.Bus/ModuleIndex`|`multiple_snapshot_default_params.json:4075-4102`；生成：`generate_multiple_snapshot_default_params.m:80-93`|GFM-ES 候选节点、模块位置和顺序|候选节点 `[9,15,19]`；模块 6 个，节点 `[9,9,15,15,19,19]`，序号 `[1,2,1,2,1,2]`|节点/序号|原始|GFM-ES参数|人为设定|否|是|需要人工确认|
 |`MaxModulesPerCandidate/N_Module_Max/EnforceSequentialBuild`|`multiple_snapshot_default_params.json:4085-4087`|每候选节点模块上限、全局模块投建上限、顺序投建规则|2；4；true|模块/布尔|原始|GFM-ES参数|人为设定|否|是|需要文献或工程约束依据|
@@ -66,7 +66,7 @@
 3. `I_limit_kA=12.25`：直接决定 SCC 安全可行域。
 4. `SCR_min=3`：直接决定 GFL-WG 接入安全下限，需有标准或文献依据。
 5. GFM `X_GFM_res/X_GFM_vir`：同时影响正常运行导纳、故障限流和阻抗重构。
-6. GFM `I_Post_Multiplier=3` 与 GFL `I_Post_Multiplier=3`：故障电流贡献的核心假设。
+6. GFM `I_Post_Multiplier=3` 与 GFL `Delta_I_GFL=1.05`：故障电流贡献的核心假设。
 7. GFM 模块年化成本 `9600/37120`：决定配置经济性和功率/能量比。
 8. `Rated_Energy_MWh=60`、效率和 SOC 边界：决定储能调节能力及是否真正参与优化。
 9. 风场景概率 `[0.25,0.5,0.25]` 与倍率 `[0.8,1,1.2]`：决定随机目标的期望成本和弃风成本。
@@ -86,7 +86,7 @@
 - UC 爬坡率=20% Pmax/h、最小开停机=3 个时段、启停成本=固定成本的 2 倍/0.5 倍。
 - 候选节点集合、模块数量上限、顺序投建规则。
 - GFM 额定 30 MW/60 MWh、2 h 时长、效率 90%、SOC 10/50/90%。
-- GFL/GFM 故障电流倍数 3、`SCR_min=3`、SCC 上限 12.25 kA。
+- GFM 故障电流倍数 3、GFL `Delta_I_GFL=1.05`、`SCR_min=3`、SCC 上限 12.25 kA。
 - 典型日权重、负荷/GFL 倍率、风场景概率和倍率。
 - `ZBoundMargin`、`KZ`、`ObjectiveScale`（这些应有数值合理性说明，而非文献支撑）。
 

@@ -48,10 +48,30 @@ end
 CONF.PN_GFL = max(CONF.PN_GFL_Node(CONF.u_GFL > 0.5));
 CONF.PN_GFL_pu_Node = CONF.PN_GFL_Node/CONF.Base_MVA;
 
-GFL_i_post_multiplier = expand_built_node_parameter( ...
-    GFL_params.I_Post_Multiplier, GFL_built_nodes, CONF.Bn);
-CONF.I_post_GFL_Node = GFL_i_post_multiplier.*CONF.PN_GFL_Node/CONF.Base_MVA; % 装备级标幺值->系统级标幺值。
+% ver_2 LVRT parameters are specified on each GFL-WG rated-power base.
+% Store both rated-base values and system-base p.u. values.
+CONF.KQ_GFL_Node = expand_built_node_parameter( ...
+    get_struct_field(GFL_params, 'K_Q', 1.5), GFL_built_nodes, CONF.Bn);
+I_gfl_n_rated = expand_built_node_parameter( ...
+    get_struct_field(GFL_params, 'I_GFL_N', 1.0), GFL_built_nodes, CONF.Bn);
+delta_i_gfl_rated = expand_built_node_parameter( ...
+    get_struct_field(GFL_params, 'Delta_I_GFL', 1.05), ...
+    GFL_built_nodes, CONF.Bn);
+CONF.V_LVRT_On_Node = expand_built_node_parameter( ...
+    get_struct_field(GFL_params, 'V_LVRT_on', 0.9), GFL_built_nodes, CONF.Bn);
+CONF.V_LVRT_Sat_Node = expand_built_node_parameter( ...
+    get_struct_field(GFL_params, 'V_LVRT_sat', 0.2), GFL_built_nodes, CONF.Bn);
+CONF.I_GFL_N_Rated_Node = I_gfl_n_rated;
+CONF.Delta_I_GFL_Rated_Node = delta_i_gfl_rated;
+CONF.I_GFL_N_pu_Node = I_gfl_n_rated.*CONF.PN_GFL_Node/CONF.Base_MVA;
+CONF.Delta_I_GFL_pu_Node = delta_i_gfl_rated.*CONF.PN_GFL_Node/CONF.Base_MVA;
+
+% The fault-node saturated-current contribution now uses the same
+% Delta_I_GFL rated-base parameter as the LVRT saturation increment.
+% Keep the legacy CONF field names for downstream interface compatibility.
+CONF.I_post_GFL_Node = CONF.Delta_I_GFL_pu_Node;
 CONF.I_post = max(CONF.I_post_GFL_Node);
+validate_gfl_lvrt_parameters(CONF, GFL_built_nodes);
 
 CONF.Require_Source_Online = logical(params.Require_Source_Online);
 
@@ -88,6 +108,14 @@ CONF.N_GFM_Module_Max = GFMModules.N_Module_Max;
 CONF.GFM_MaxModulesPerCandidate = GFMModules.MaxModulesPerCandidate;
 CONF.GFM_Module_Sequential = GFMModules.EnforceSequentialBuild;
 CONF.GFM_Module_I_Post_Multiplier = GFMModules.I_Post_Multiplier;
+
+% ver_2 configuration scheme set and fixed configuration-state mapping.
+GFMConfig = build_gfm_configuration_catalog(GFMModules);
+CONF.GFM_Config_Count = GFMConfig.Count;
+CONF.GFM_Config_Module_Matrix = GFMConfig.ModuleStatus;
+CONF.GFM_Config_Candidate_Matrix = GFMConfig.CandidateStatus;
+CONF.GFM_Config_A_cne = GFMConfig.A_cne;
+CONF.GFM_Config_Module_Count = GFMConfig.ModuleCount;
 
 % 安全网络统一保留全部同步机、GFM-ES候选节点和已建GFL-WG接入节点。
 % Original_To_Reduced以0表示被Kron消元的原节点，其余值为降阶节点索引。
@@ -432,7 +460,7 @@ end
 end
 
 function [retained_nodes, original_to_reduced] = ...
-    build_safety_network_mapping(generator_nodes, gfm_nodes, gfl_nodes, n_nodes)
+build_safety_network_mapping(generator_nodes, gfm_nodes, gfl_nodes, n_nodes)
 %% 构造安全网络统一保留节点集合及原节点到降阶节点的映射。
 
 all_nodes = [generator_nodes(:); gfm_nodes(:); gfl_nodes(:)];
@@ -448,6 +476,33 @@ retained_nodes = unique(all_nodes,'sorted');
 original_to_reduced = zeros(n_nodes,1);
 original_to_reduced(retained_nodes) = (1:numel(retained_nodes)).';
 
+end
+
+function validate_gfl_lvrt_parameters(CONF, gfl_nodes)
+% Validate the three-segment LVRT parameterization in rated-power units.
+gfl_nodes = gfl_nodes(:);
+KQ = CONF.KQ_GFL_Node(gfl_nodes);
+I_N = CONF.I_GFL_N_Rated_Node(gfl_nodes);
+V_on = CONF.V_LVRT_On_Node(gfl_nodes);
+V_sat = CONF.V_LVRT_Sat_Node(gfl_nodes);
+Delta_I = CONF.Delta_I_GFL_Rated_Node(gfl_nodes);
+
+if any(~isfinite(KQ)) || any(KQ <= 0) || ...
+        any(~isfinite(I_N)) || any(I_N <= 0)
+    error('GFL-WG K_Q and I_GFL_N must be finite and strictly positive.');
+end
+if any(~isfinite(V_on)) || any(~isfinite(V_sat)) || ...
+        any(V_sat < 0 | V_sat > V_on | V_on > 1)
+    error('GFL-WG LVRT thresholds must satisfy 0 <= V_sat <= V_on <= 1.');
+end
+if any(~isfinite(Delta_I)) || any(Delta_I < 0) || ...
+        any(Delta_I > KQ.*I_N.*V_on + 1e-10)
+    error('GFL-WG Delta_I_GFL violates the LVRT linear-segment feasibility bound.');
+end
+expected_v_sat = V_on - Delta_I./(KQ.*I_N);
+if any(abs(V_sat-expected_v_sat) > 1e-9)
+    error('GFL-WG V_LVRT_sat must equal V_LVRT_on-Delta_I_GFL/(K_Q*I_GFL_N).');
+end
 end
 
 function value = get_struct_field(input_struct, field_name, default_value)
