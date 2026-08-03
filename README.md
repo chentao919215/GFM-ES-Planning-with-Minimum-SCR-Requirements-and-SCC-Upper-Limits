@@ -27,7 +27,7 @@
 
 - `Grid_Following_Inverters_LVRT.slx`支持自动电流参考和手动电流参考两种模式；
 - 手动参考电流仍经过LVRT和无功优先限流环节，不绕过故障穿越控制；
-- 参数脚本为 `code/scripts/equipment/Invert_Parameters.m`，默认手动参考由 `Manual_Current_Ref`、`Id_ref_manual` 和 `Iq_ref_manual` 控制；
+- 参数脚本为 `code/scripts/equipment/GFL_Parameters.m`，默认手动参考由 `Manual_Current_Ref`、`Id_ref_manual` 和 `Iq_ref_manual` 控制；
 - 报告图5-2扫描脚本为 `code/scripts/figure/for_report/report_04/plot_fig_05_02.m`，输出位于 `figs/for_report/`；
 - Simulink模型统一位于 `simulink/models/`，缓存和代码生成文件统一位于 `simulink/artifacts/`；
 - 模型 `InitFcn` 已自动配置Simulink生成目录，手动运行模型时不再依赖当前工作目录。
@@ -35,6 +35,18 @@
 多时段优化模型的 ver_2 安全约束额外考虑非故障节点的 LVRT 触发。GFL-WG 故障节点保留饱和限流处理，非故障节点根据残余电压在零电流、线性增量和饱和增量三个区段间切换；同步机交集工况的残余电压方程显式反馈非故障节点GFL-WG增量电流。配置集合和阻抗网络在优化前离线枚举，GFM-ES配置与UC跨场景共享，安全网络和LVRT变量不增加风电场景维度。
 
 安全状态仍仅在各典型日内跨时段聚合：SCC采用同步机状态并集，SCR采用同步机状态交集。安全网络阻抗重构、McCormick辅助变量及阻抗上下界预处理不增加风电场景维度。同步机运行状态、启动动作、停机动作、爬坡过程和最小开停机过程均在各典型日日首与日末之间循环衔接。
+
+## 2026-08 参数结构与论文模型对齐
+
+本轮更新优化了参数赋值结构，并将项目自有代码与《基于场景随机优化的多时段模块化GFM-ES配置优化模型_ver_2》严格对齐：
+
+- 默认参数继续由 `data/params/generate_multiple_snapshot_default_params.m` 统一生成，并通过 `normalize_multiple_snapshot_conf.m` 形成一致的内部参数结构；
+- 项目自有变量及内部结构体字段统一采用大写蛇形命名，多文件中的同一物理量保持一致；
+- 清理了能够确认冗余的历史兼容、重复检查和静默回退代码，同时保留输入边界、维度、数值稳定性及求解结果有效性检查；
+- 多时段规划函数的约束装配顺序已按论文第2.1节至第2.5节组织为规划、基础潮流、UC、GFM-ES、安全约束和McCormick线性化；
+- UC状态仍在同一典型日的不同风电场景之间共享，运行补救变量随场景变化；
+- 聚合安全状态、阻抗重构、LVRT、短路电流水平、SCR及其McCormick约束仍仅按典型日建立，不随风电场景复制；
+- 配置枚举、不可逆状态剔除、阻抗边界与故障转移系数计算继续作为离线预处理，不作为新的在线优化约束。
 
 ## 运行入口
 
@@ -85,9 +97,6 @@ code/scripts/system/start_multiple_snapshot_planning_longrun.m
 
 ```text
 code/functions/optimization/solve_multiple_snapshot_planning.m
-code/functions/optimization/build_multiple_snapshot_deterministic_case.m
-code/functions/optimization/check_multiple_snapshot_deterministic_degradation.m
-code/functions/optimization/compare_multiple_snapshot_deterministic_results.m
 code/functions/security/add_impedance_reconstruction_constraints.m
 code/functions/security/add_short_circuit_current_constraints.m
 code/functions/security/add_classic_scr_constraints.m
@@ -171,6 +180,6 @@ docs/matlab_environment_note.md
 - 保留了同步机 UC、GFL-WG 弃风成本、GFM-ES 投建成本与储能运行约束；
 - 已形成仅考虑经济性约束的算例结果：`results/multiple_snapshot_planning_result_20260717_103238.mat`；
 - 已根据该结果生成同步机 UC 状态图，图表位于 `figs/economic_20260717_103238/02_operation/`；其中 D01 典型日的同步机启停次数最多，共 4 次启动和 4 次关停；
-- 上述经济性结果由 `C = [C_plan, C_operation, C_cost]` 版本生成；当前求解函数保留该版本作为注释备份，活动约束仍为包含安全约束的完整集合。经济性结果中的安全相关后处理不应作为安全性结论。
+- 上述经济性结果由历史上的纯经济性约束版本生成；当前求解函数已按论文第2.1节至第2.5节装配包含安全约束的完整集合。经济性结果中的安全相关后处理不应作为安全性结论。
 
 本次提交用于项目当前状态的常规备份。后续工作包括：完善经济性算例专用后处理、补充安全约束算例对照、开展参数灵敏度分析，并进一步核查 GFM-ES 成本和故障电流参数的工程依据。

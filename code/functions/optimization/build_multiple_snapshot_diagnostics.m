@@ -25,31 +25,31 @@ Diagnostics.node_count = NaN;
 Diagnostics.iteration_count = NaN;
 
 if isfield(sol, 'solveroutput') && isstruct(sol.solveroutput)
-    solver_result = sol.solveroutput;
-    if isfield(solver_result, 'result') && isstruct(solver_result.result)
-        solver_result = solver_result.result;
+    Solver_Result = sol.solveroutput;
+    if isfield(Solver_Result, 'result') && isstruct(Solver_Result.result)
+        Solver_Result = Solver_Result.result;
     end
 
-    Diagnostics.objective = read_numeric_field(solver_result, 'objval', NaN);
-    Diagnostics.best_bound = read_numeric_field(solver_result, 'objbound', NaN);
-    Diagnostics.mip_gap = read_numeric_field(solver_result, 'mipgap', NaN);
-    Diagnostics.node_count = read_numeric_field(solver_result, 'nodecount', NaN);
-    Diagnostics.iteration_count = read_numeric_field(solver_result, 'itercount', NaN);
-    solution_count = read_numeric_field(solver_result, 'solcount', NaN);
-    Diagnostics.has_incumbent = (~isnan(solution_count) && solution_count > 0) || ...
+    Diagnostics.objective = read_numeric_field(Solver_Result, 'objval', NaN);
+    Diagnostics.best_bound = read_numeric_field(Solver_Result, 'objbound', NaN);
+    Diagnostics.mip_gap = read_numeric_field(Solver_Result, 'mipgap', NaN);
+    Diagnostics.node_count = read_numeric_field(Solver_Result, 'nodecount', NaN);
+    Diagnostics.iteration_count = read_numeric_field(Solver_Result, 'itercount', NaN);
+    Solution_Count = read_numeric_field(Solver_Result, 'solcount', NaN);
+    Diagnostics.has_incumbent = (~isnan(Solution_Count) && Solution_Count > 0) || ...
         isfinite(Diagnostics.objective);
 end
 
 end
 
-function value = read_numeric_field(input_struct, field_name, default_value)
+function value = read_numeric_field(Input_Struct, Field_Name, Default_Value)
 %% 本函数功能是读取Gurobi结果中的数值字段。
 
-if isfield(input_struct, field_name) && isnumeric(input_struct.(field_name)) && ...
-        isscalar(input_struct.(field_name))
-    value = double(input_struct.(field_name));
+if isfield(Input_Struct, Field_Name) && isnumeric(Input_Struct.(Field_Name)) && ...
+        isscalar(Input_Struct.(Field_Name))
+    value = double(Input_Struct.(Field_Name));
 else
-    value = default_value;
+    value = Default_Value;
 end
 
 end

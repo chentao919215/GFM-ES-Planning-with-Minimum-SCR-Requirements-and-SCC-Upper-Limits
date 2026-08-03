@@ -1,41 +1,45 @@
-function [SCC_0, SCC_1] = calculate_short_circuit_currents(Z_val, value_u_GFM_mod, u_GFL, CONF, Y0, Y_SG_Add)
+function [SCC_0, SCC_1] = calculate_short_circuit_currents( ...
+    Z_Val, Value_u_GFM_Module, u_GFL, CONF, Y0, Y_SG_Add, Phi_GFL_Scaled)
 %% 本函数功能是计算基准状态和优化配置后的短路电流。
 %
 % SCC_0表示未考虑GFM-ES投建结果时的基准短路电流。
-% SCC_1表示考虑优化得到的GFM-ES投建结果后的短路电流。
+% SCC_1按《ver_2》式(1.74)至式(1.77)计算聚合安全工况短路电流。
+
+CONF = normalize_multiple_snapshot_conf(CONF);
 
 %% 1. 计算优化配置后的短路电流
 N = numel(u_GFL);
 SCC_1 = zeros(N,1);
-GFM_delta_node = CONF.GFM_Module_Loc_Mat * ...
-    (CONF.GFM_Module_DeltaY_abs(:).*value_u_GFM_mod(:));
+if nargin < 7 || isempty(Phi_GFL_Scaled)
+    Phi_GFL_Scaled = zeros(N,1);
+else
+    Phi_GFL_Scaled = Phi_GFL_Scaled(:);
+end
+if numel(Phi_GFL_Scaled) ~= N
+    error('GFL-WG故障转移项长度应与系统节点数一致。');
+end
+
+GFM_Delta_Node = CONF.GFM_Module_Loc_Mat * ...
+    (CONF.GFM_Module_DeltaY_abs(:).*Value_u_GFM_Module(:));
+Delta_I_Fault_Node = CONF.Delta_I_GFL_pu_Node(:).*u_GFL(:);
 
 for i = 1:N
-    % 由节点自阻抗得到等值电压源支路导纳
-    Y_th = 1/(imag(Z_val(i,i))+1e-12);
-
-    % 同一故障节点上的多个GFM-ES模块会共同改变等值电压源支路导纳
-    I_vs = Y_th - GFM_delta_node(i);
-
-    % 已建GFL按电流源贡献计入短路电流
-    if isfield(CONF,'I_GFL_N_pu_Node')
-        I_gfl_n = CONF.I_GFL_N_pu_Node(i);
-    else
-        I_gfl_n = CONF.PN_GFL_pu_Node(i);
-    end
-    I_cs = (CONF.I_post_GFL_Node(i)+I_gfl_n)*u_GFL(i);
+    % 非故障GFL-WG转移项先还原KZ尺度，再除以节点自阻抗。
+    x_Diag = max(imag(Z_Val(i,i)),1e-12);
+    I_Vs = (1+Phi_GFL_Scaled(i)/CONF.KZ)/x_Diag - ...
+        GFM_Delta_Node(i);
 
     % 标幺短路电流换算为kA
-    SCC_1(i) = (I_vs+I_cs)*CONF.Base_kA;
+    SCC_1(i) = (I_Vs+Delta_I_Fault_Node(i))*CONF.Base_kA;
 end
 
 %% 2. 计算基准短路电流
 % 基准状态只包含网络导纳和同步机等效导纳
-Y0_sc = Y0 + Y_SG_Add;
-Z0_sc = inv(full(Y0_sc));
-X0_diag = abs(imag(diag(Z0_sc)));
+Y_0_Sc = Y0 + Y_SG_Add;
+Z_0_Sc = full(Y_0_Sc)\eye(N);
+X_0_Diag = abs(imag(diag(Z_0_Sc)));
 
 % 由节点自阻抗虚部计算三相短路电流
-SCC_0 = (1./max(X0_diag, 1e-12))*CONF.Base_kA;
+SCC_0 = (1./max(X_0_Diag, 1e-12))*CONF.Base_kA;
 
 end

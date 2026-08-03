@@ -10,75 +10,75 @@ clc; close all;
 % 单条曲线示例："out.v_PCC_mag"
 % 若后续需要三组场景对比，可写成：
 % signal_paths = ["out_SCR2_Q0.v_PCC_mag", "out_SCR3_Q0.v_PCC_mag", "out_SCR3_QN.v_PCC_mag"];
-signal_paths = "out.v_PCC_mag";
+Signal_Paths = "out.v_PCC_mag";
 
 % 曲线图例名称
 % 若留空 strings(0,1)，则默认使用 signal_paths 生成图例
-legend_labels_user = "并网点电压幅值";
+Legend_Labels_User = "并网点电压幅值";
 
 % 数据缩放系数
 % 例如：原始数据单位为 V，若希望绘制 kV，则设 y_scale = 1e-3
 % 若希望绘制 p.u.，则设 y_scale = 1/Ubase
-x_scale = 1;
-y_scale = 1e-3;
+X_Scale = 1;
+Y_Scale = 1e-3;
 
 % 图题与坐标轴标签
-fig_title = "";
-x_label = "时间/s";
-y_label = "幅值/kV";
+Figure_Title = "";
+X_Label = "时间/s";
+Y_Label = "幅值/kV";
 
 % 坐标轴范围；不需要限制就设为 []
-x_lim = [0 1];
-y_lim = [];
+X_Limit = [0 1];
+Y_Limit = [];
 
 % 是否显示图例
-show_legend = true;
+Show_Legend = true;
 
 %% ===================== 数据读取区 =====================
 
-signal_paths = string(signal_paths);
+Signal_Paths = string(Signal_Paths);
 
-if isempty(signal_paths)
+if isempty(Signal_Paths)
     error('未指定任何 Simulink timeseries 信号路径。');
 end
 
 fprintf('准备读取工作区中的 Simulink timeseries 信号：\n');
-disp(signal_paths(:));
+disp(Signal_Paths(:));
 
-all_t = cell(numel(signal_paths), 1);
-all_y = cell(numel(signal_paths), 1);
+All_t = cell(numel(Signal_Paths), 1);
+All_Y = cell(numel(Signal_Paths), 1);
 
-for k = 1:numel(signal_paths)
+for k = 1:numel(Signal_Paths)
     try
-        raw_signal = evalin('base', signal_paths(k));
+        Raw_Signal = evalin('base', Signal_Paths(k));
     catch ME
-        error('无法从工作区读取信号：%s\n原始错误信息：%s', signal_paths(k), ME.message);
+        error('无法从工作区读取信号：%s\n原始错误信息：%s', Signal_Paths(k), ME.message);
     end
 
-    [t, y] = timeseries_to_xy(raw_signal);
+    [t, y] = timeseries_to_xy(Raw_Signal);
 
-    t = t(:) * x_scale;
-    y = y(:) * y_scale;
+    t = t(:) * X_Scale;
+    y = y(:) * Y_Scale;
 
-    all_t{k} = t;
-    all_y{k} = y;
+    All_t{k} = t;
+    All_Y{k} = y;
 
-    fprintf('已读取信号：%s，数据点数：%d\n', signal_paths(k), numel(t));
+    fprintf('已读取信号：%s，数据点数：%d\n', Signal_Paths(k), numel(t));
 end
 
 %% ===================== 变量选择区 =====================
 
 % 兼容原 CSV 脚本结构：这里不再按列名选择变量，而是直接使用
 % 用户设置区中的 signal_paths 作为待绘制信号。
-if isempty(legend_labels_user)
-    legend_labels = clean_legend_names(signal_paths);
+if isempty(Legend_Labels_User)
+    Legend_Labels = clean_legend_names(Signal_Paths);
 else
-    legend_labels = cellstr(string(legend_labels_user));
+    Legend_Labels = cellstr(string(Legend_Labels_User));
 end
 
-if numel(legend_labels) ~= numel(signal_paths)
+if numel(Legend_Labels) ~= numel(Signal_Paths)
     warning('legend_labels_user 数量与 signal_paths 数量不一致，已自动使用 signal_paths 生成图例。');
-    legend_labels = clean_legend_names(signal_paths);
+    Legend_Labels = clean_legend_names(Signal_Paths);
 end
 
 %% ===================== 绘图区 =====================
@@ -93,36 +93,36 @@ hold(ax, 'on');
 
 % 论文图推荐线型：
 % 第1条：黑色虚线；第2条：红色实线；第3条：蓝色实线
-line_styles = {'-', '--', '-'};
-line_colors = {[0.00 0.30 0.75],[0 0 0], [0.85 0.10 0.10]};
-line_widths = [1.6, 1.8, 1.8];
+Line_Styles = {'-', '--', '-'};
+Line_Colors = {[0.00 0.30 0.75],[0 0 0], [0.85 0.10 0.10]};
+Line_Widths = [1.6, 1.8, 1.8];
 
-plot_handles = gobjects(numel(signal_paths), 1);
+Plot_Handles = gobjects(numel(Signal_Paths), 1);
 
-for k = 1:numel(signal_paths)
-    x = all_t{k};
-    y = all_y{k};
+for k = 1:numel(Signal_Paths)
+    x = All_t{k};
+    y = All_Y{k};
     valid = isfinite(x) & isfinite(y);
 
-    style_idx = min(k, numel(line_styles));
-    color_idx = min(k, numel(line_colors));
-    width_idx = min(k, numel(line_widths));
+    Style_Index = min(k, numel(Line_Styles));
+    Color_Index = min(k, numel(Line_Colors));
+    Width_Index = min(k, numel(Line_Widths));
 
-    plot_handles(k) = plot(ax, x(valid), y(valid), ...
-        'LineStyle', line_styles{style_idx}, ...
-        'Color', line_colors{color_idx}, ...
-        'LineWidth', line_widths(width_idx));
+    Plot_Handles(k) = plot(ax, x(valid), y(valid), ...
+        'LineStyle', Line_Styles{Style_Index}, ...
+        'Color', Line_Colors{Color_Index}, ...
+        'LineWidth', Line_Widths(Width_Index));
 end
 
 hold(ax, 'off');
 
 % 坐标轴范围
-if ~isempty(x_lim)
-    xlim(ax, x_lim);
+if ~isempty(X_Limit)
+    xlim(ax, X_Limit);
 end
 
-if ~isempty(y_lim)
-    ylim(ax, y_lim);
+if ~isempty(Y_Limit)
+    ylim(ax, Y_Limit);
 end
 
 % 坐标轴与网格格式
@@ -143,19 +143,19 @@ set(ax, ...
     'YMinorGrid', 'off');
 
 % 坐标轴标签
-xlabel(ax, x_label, ...
+xlabel(ax, X_Label, ...
     'FontName', '宋体', ...
     'FontSize', 11, ...
     'Color', 'k');
 
-ylabel(ax, y_label, ...
+ylabel(ax, Y_Label, ...
     'FontName', '宋体', ...
     'FontSize', 11, ...
     'Color', 'k');
 
 % 图题
-if strlength(fig_title) > 0
-    title(ax, fig_title, ...
+if strlength(Figure_Title) > 0
+    title(ax, Figure_Title, ...
         'FontName', '宋体', ...
         'FontSize', 11, ...
         'Color', 'k', ...
@@ -163,8 +163,8 @@ if strlength(fig_title) > 0
 end
 
 % 图例
-if show_legend
-    legend(ax, plot_handles, legend_labels, ...
+if Show_Legend
+    legend(ax, Plot_Handles, Legend_Labels, ...
         'Location', 'northwest', ...
         'FontName', '宋体', ...
         'FontSize', 10.5, ...
@@ -174,34 +174,28 @@ end
 
 %% ===================== 本地函数区 =====================
 
-function [t, y] = timeseries_to_xy(raw_signal)
-    if isa(raw_signal, 'timeseries')
-        t = raw_signal.Time;
-        y = raw_signal.Data;
-    elseif isa(raw_signal, 'Simulink.SimulationData.Signal')
+function [t, y] = timeseries_to_xy(Raw_Signal)
+    if isa(Raw_Signal, 'timeseries')
+        t = Raw_Signal.Time;
+        y = Raw_Signal.Data;
+    elseif isa(Raw_Signal, 'Simulink.SimulationData.Signal')
         % 若 signal logging 得到的是 Simulink.SimulationData.Signal
-        values = raw_signal.Values;
+        values = Raw_Signal.Values;
         if ~isa(values, 'timeseries')
             error('Simulink.SimulationData.Signal.Values 不是 timeseries 类型。');
         end
         t = values.Time;
         y = values.Data;
-    elseif isstruct(raw_signal) && isfield(raw_signal, 'time') && isfield(raw_signal, 'signals')
-        % 兼容 Structure With Time 格式
-        t = raw_signal.time;
-        y = raw_signal.signals.values;
     else
-        error('暂不支持该数据类型：%s。请确认导出变量为 timeseries。', class(raw_signal));
+        error('暂不支持该数据类型：%s。请确认导出变量为 timeseries。', class(Raw_Signal));
     end
 
     t = double(t);
     y = double(squeeze(y));
 
-    % 若 y 为多列数据，默认取第 1 列；PCC 幅值通常应为单列。
+    % PCC幅值应为单列。
     if ~isvector(y)
-        warning('信号数据不是单列，已默认取第 1 列绘制。');
-        y = reshape(y, size(y, 1), []);
-        y = y(:, 1);
+        error('信号数据必须为单列。');
     end
 
     y = y(:);

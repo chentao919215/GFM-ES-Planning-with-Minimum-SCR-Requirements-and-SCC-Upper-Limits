@@ -1,86 +1,86 @@
-function RunInfo = start_multiple_snapshot_planning_longrun(project_root)
+function Run_Info = start_multiple_snapshot_planning_longrun(Project_Root)
 %% 本函数功能是在后台启动多时段规划主脚本。
 %
 % MCP桥接调用的同步响应窗口较短。
 % 本函数通过timer回调启动主脚本，抑制求解器控制台输出，并将进度写入状态文件。
 
-if nargin < 1 || isempty(project_root)
-    project_root = resolve_project_root();
+if nargin < 1 || isempty(Project_Root)
+    Project_Root = resolve_project_root();
 end
 
-project_root = canonical_path(project_root);
-functions_dir = fullfile(project_root, 'code', 'functions');
-scripts_dir = fullfile(project_root, 'code', 'scripts');
-results_dir = fullfile(project_root, 'results');
-script_file = fullfile(scripts_dir, 'system', 'run_multiple_snapshot_planning.m');
+Project_Root = canonical_path(Project_Root);
+Functions_Directory = fullfile(Project_Root, 'code', 'functions');
+Scripts_Directory = fullfile(Project_Root, 'code', 'scripts');
+Results_Directory = fullfile(Project_Root, 'results');
+Script_File = fullfile(Scripts_Directory, 'system', 'run_multiple_snapshot_planning.m');
 
-if ~isfolder(functions_dir)
-    error('Missing functions directory: %s', functions_dir);
+if ~isfolder(Functions_Directory)
+    error('Missing functions directory: %s', Functions_Directory);
 end
-if ~isfile(script_file)
-    error('Missing planning script: %s', script_file);
+if ~isfile(Script_File)
+    error('Missing planning script: %s', Script_File);
 end
 
-addpath(genpath(functions_dir));
-ensure_directory(results_dir);
+addpath(genpath(Functions_Directory));
+ensure_directory(Results_Directory);
 
 stamp = char(datetime('now', 'Format', 'yyyyMMdd_HHmmss'));
-status_file = fullfile(results_dir, ['mcp_multiple_snapshot_longrun_', stamp, '_status.txt']);
-output_file = fullfile(results_dir, ['mcp_multiple_snapshot_longrun_', stamp, '_captured_output.txt']);
-timer_key = ['multiple_snapshot_longrun_timer_', stamp];
+Status_File = fullfile(Results_Directory, ['mcp_multiple_snapshot_longrun_', stamp, '_status.txt']);
+Output_File = fullfile(Results_Directory, ['mcp_multiple_snapshot_longrun_', stamp, '_captured_output.txt']);
+Timer_Key = ['multiple_snapshot_longrun_timer_', stamp];
 
-RunInfo = struct();
-RunInfo.project_root = project_root;
-RunInfo.script_file = script_file;
-RunInfo.status_file = status_file;
-RunInfo.output_file = output_file;
-RunInfo.timer_key = timer_key;
+Run_Info = struct();
+Run_Info.Project_Root = Project_Root;
+Run_Info.Script_File = Script_File;
+Run_Info.Status_File = Status_File;
+Run_Info.Output_File = Output_File;
+Run_Info.Timer_Key = Timer_Key;
 
-write_status(status_file, 'SCHEDULED', 'Timer has been created.', ...
-    'script_file', script_file, 'output_file', output_file);
+write_status(Status_File, 'SCHEDULED', 'Timer has been created.', ...
+    'script_file', Script_File, 'output_file', Output_File);
 
 t = timer('ExecutionMode','singleShot', 'StartDelay',1, ...
-    'Name',timer_key, 'TimerFcn',{@run_multiple_snapshot_callback,RunInfo});
-setappdata(0, timer_key, t);
+    'Name',Timer_Key, 'TimerFcn',{@run_multiple_snapshot_callback,Run_Info});
+setappdata(0, Timer_Key, t);
 start(t);
 
-fprintf('status_file=%s\n', status_file);
-fprintf('output_file=%s\n', output_file);
+fprintf('status_file=%s\n', Status_File);
+fprintf('output_file=%s\n', Output_File);
 
 end
 
-function run_multiple_snapshot_callback(timer_obj, ~, RunInfo)
+function run_multiple_snapshot_callback(Timer_Obj, ~, Run_Info)
 %% 本函数功能是执行后台求解并更新状态文件。
 
-started_at = datetime('now');
-warning_state = warning;
-option_key = 'multiple_snapshot_mcp_gurobi_options';
-had_old_options = isappdata(0, option_key);
-if had_old_options
-    old_options = getappdata(0, option_key);
+Started_At = datetime('now');
+Warning_State = warning;
+Option_Key = 'multiple_snapshot_mcp_gurobi_options';
+Had_Old_Options = isappdata(0, Option_Key);
+if Had_Old_Options
+    Old_Options = getappdata(0, Option_Key);
 else
-    old_options = [];
+    Old_Options = [];
 end
 
-write_status(RunInfo.status_file, 'RUNNING', 'Planning script is running.', ...
-    'started_at', format_time(started_at), ...
-    'script_file', RunInfo.script_file, 'output_file', RunInfo.output_file);
+write_status(Run_Info.Status_File, 'RUNNING', 'Planning script is running.', ...
+    'started_at', format_time(Started_At), ...
+    'script_file', Run_Info.Script_File, 'output_file', Run_Info.Output_File);
 
 try
-    addpath(genpath(fullfile(RunInfo.project_root, 'code', 'functions')));
-    setappdata(0, option_key, struct('quiet',true));
+    addpath(genpath(fullfile(Run_Info.Project_Root, 'code', 'functions')));
+    setappdata(0, Option_Key, struct('quiet',true));
     warning('off', 'all');
 
-    captured_output = evalc('run(RunInfo.script_file);');
-    write_text_file(RunInfo.output_file, captured_output);
+    Captured_Output = evalc('run(Run_Info.Script_File);');
+    write_text_file(Run_Info.Output_File, Captured_Output);
 
-    [result_file, Result] = find_latest_result( ...
-        fullfile(RunInfo.project_root, 'results'), started_at);
-    if isempty(result_file)
-        write_status(RunInfo.status_file, 'NO_RESULT', ...
+    [Result_File, Result] = find_latest_result( ...
+        fullfile(Run_Info.Project_Root, 'results'), Started_At);
+    if isempty(Result_File)
+        write_status(Run_Info.Status_File, 'NO_RESULT', ...
             'Script finished but no new result file was found.', ...
             'finished_at',format_time(datetime('now')), ...
-            'output_file',RunInfo.output_file);
+            'output_file',Run_Info.Output_File);
     else
         if Result.Diagnostics.problem == 0
             state = 'DONE';
@@ -94,10 +94,10 @@ try
             message = 'Script finished, but the solver did not report success.';
         end
 
-        write_status(RunInfo.status_file, state, message, ...
-            'started_at',format_time(started_at), ...
+        write_status(Run_Info.Status_File, state, message, ...
+            'started_at',format_time(Started_At), ...
             'finished_at',format_time(datetime('now')), ...
-            'result_file',result_file, 'output_file',RunInfo.output_file, ...
+            'result_file',Result_File, 'output_file',Run_Info.Output_File, ...
             'problem',Result.Diagnostics.problem, ...
             'info',Result.Diagnostics.info, ...
             'solve_time',Result.solve_time, ...
@@ -114,65 +114,65 @@ try
             'u_GFM_Mod',Result.u_GFM_Mod);
     end
 catch ME
-    write_status(RunInfo.status_file, 'ERROR', ME.message, ...
-        'started_at',format_time(started_at), ...
+    write_status(Run_Info.Status_File, 'ERROR', ME.message, ...
+        'started_at',format_time(Started_At), ...
         'finished_at',format_time(datetime('now')), ...
-        'output_file',RunInfo.output_file, ...
+        'output_file',Run_Info.Output_File, ...
         'report',getReport(ME,'extended','hyperlinks','off'));
 end
 
-warning(warning_state);
-if had_old_options
-    setappdata(0, option_key, old_options);
+warning(Warning_State);
+if Had_Old_Options
+    setappdata(0, Option_Key, Old_Options);
 else
-    rmappdata_if_present(option_key);
+    rmappdata_if_present(Option_Key);
 end
-cleanup_timer(timer_obj, RunInfo.timer_key);
+cleanup_timer(Timer_Obj, Run_Info.Timer_Key);
 
 end
 
-function value = read_diagnostic(Diagnostics, field_name)
+function value = read_diagnostic(Diagnostics, Field_Name)
 %% 本函数功能是安全读取可选诊断字段。
 
-if isfield(Diagnostics, field_name)
-    value = Diagnostics.(field_name);
+if isfield(Diagnostics, Field_Name)
+    value = Diagnostics.(Field_Name);
 else
     value = NaN;
 end
 
 end
 
-function [result_file, Result] = find_latest_result(results_dir, started_at)
+function [Result_File, Result] = find_latest_result(Results_Directory, Started_At)
 %% 本函数功能是查找本次后台运行生成的最新结果文件。
 
-result_file = '';
+Result_File = '';
 Result = struct();
-files = dir(fullfile(results_dir, 'multiple_snapshot_planning_result_*.mat'));
+files = dir(fullfile(Results_Directory, 'multiple_snapshot_planning_result_*.mat'));
 if isempty(files)
     return;
 end
 
-start_time = started_at - seconds(1);
-file_times = datetime([files.datenum], 'ConvertFrom', 'datenum');
-is_new = file_times >= start_time;
-files = files(is_new);
+Start_Time = Started_At - seconds(1);
+File_Times = datetime([files.datenum], 'ConvertFrom', 'datenum');
+Is_New = File_Times >= Start_Time;
+files = files(Is_New);
 if isempty(files)
     return;
 end
 
-[~, latest_idx] = max(file_times(is_new));
-result_file = fullfile(files(latest_idx).folder, files(latest_idx).name);
-loaded = load(result_file, 'Result');
+[~, Latest_Index] = max(File_Times(Is_New));
+Result_File = fullfile(files(Latest_Index).folder, files(Latest_Index).name);
+loaded = load(Result_File, 'Result');
 Result = loaded.Result;
 
 end
 
-function write_status(status_file, state, message, varargin)
+function write_status(Status_File, state, message, varargin)
 %% 本函数功能是覆盖写入后台求解状态。
 
-fid = fopen(status_file, 'w');
+fid = fopen(Status_File, 'w');
 if fid < 0
-    error('Unable to write status file: %s', status_file);
+    error('Unable to write status file: %s', Status_File);
 end
 cleanup = onCleanup(@() fclose(fid));
 
@@ -202,12 +202,12 @@ text = regexprep(text, '[\r\n]+', ' | ');
 
 end
 
-function write_text_file(file_path, content)
+function write_text_file(File_Path, content)
 %% 本函数功能是保存后台脚本的命令行输出。
 
-fid = fopen(file_path, 'w');
+fid = fopen(File_Path, 'w');
 if fid < 0
-    error('Unable to write output file: %s', file_path);
+    error('Unable to write output file: %s', File_Path);
 end
 cleanup = onCleanup(@() fclose(fid));
 fprintf(fid, '%s', content);
@@ -215,18 +215,18 @@ delete(cleanup);
 
 end
 
-function cleanup_timer(timer_obj, timer_key)
+function cleanup_timer(Timer_Obj, Timer_Key)
 %% 本函数功能是清理后台timer及其应用数据。
 
 try
-    stop(timer_obj);
+    stop(Timer_Obj);
 catch
 end
 try
-    delete(timer_obj);
+    delete(Timer_Obj);
 catch
 end
-rmappdata_if_present(timer_key);
+rmappdata_if_present(Timer_Key);
 
 end
 
@@ -239,30 +239,30 @@ end
 
 end
 
-function text = format_time(time_value)
+function text = format_time(Time_Value)
 %% 本函数功能是将时间转换为状态文件格式。
 
-text = char(time_value, 'yyyy-MM-dd HH:mm:ss');
+text = char(Time_Value, 'yyyy-MM-dd HH:mm:ss');
 
 end
 
-function project_root = resolve_project_root()
+function Project_Root = resolve_project_root()
 %% 本函数功能是解析项目根目录。
 
 candidate = fileparts(fileparts(fileparts(fileparts(mfilename('fullpath')))));
 if isfolder(fullfile(candidate, 'code', 'functions')) && ...
         isfile(fullfile(candidate, 'data', 'params', ...
         'multiple_snapshot_default_params.json'))
-    project_root = candidate;
+    Project_Root = candidate;
 else
-    project_root = pwd;
+    Project_Root = pwd;
 end
 
 end
 
-function path_value = canonical_path(path_value)
+function Path_Value = canonical_path(Path_Value)
 %% 本函数功能是将路径转换为规范绝对路径。
 
-path_value = char(java.io.File(path_value).getCanonicalPath());
+Path_Value = char(java.io.File(Path_Value).getCanonicalPath());
 
 end

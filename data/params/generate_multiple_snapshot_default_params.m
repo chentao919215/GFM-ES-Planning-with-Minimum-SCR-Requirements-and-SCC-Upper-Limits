@@ -1,256 +1,217 @@
-%% 生成多时段GFM-ES配置算例的默认参数文件
-% 本文件是给人阅读和维护的参数源文件；JSON文件是给程序读取的参数文件。
-% 修改参数时，优先修改本脚本，然后运行本脚本重新生成参数文件:
-% multiple_snapshot_default_params.json。
+%% 生成多时段GFM-ES配置案例的默认参数文件
+% 本脚本是供人阅读和维护的参数源文件；JSON文件由本脚本自动生成。
+% 修改参数时，优先修改本脚本，然后重新运行本脚本生成JSON。
 
 clear params;
-param_dir   = fileparts(mfilename('fullpath'));
-output_file = fullfile(param_dir, 'multiple_snapshot_default_params.json');
+Parameter_Directory   = fileparts(mfilename('fullpath'));
+Output_File = fullfile(Parameter_Directory, 'multiple_snapshot_default_params.json');
 
-%% 0. 读取Matpower基准值
-mpc             = case30;
-params.mpc      = mpc;
-params.base_MVA = mpc.baseMVA;
-params.base_kV  = mpc.bus(1,10);
-params.base_kA  = params.base_MVA/params.base_kV/sqrt(3);
-params.base_O   = params.base_kV^2/params.base_MVA;
+%% 0. 读取MATPOWER基准案例
+mpc = case30;
 
-%% 1. 多时段典型日与风电场景
-% 采用若干典型日，每个典型日包含12个连续2小时时段。
-% TypicalDayWeights_Days表示各典型日代表的实际天数，合计应为365天。
-% PeriodDurations_Hours表示各时段持续小时数；文档模型要求同一典型日内各时段等长且合计24小时。
-params.MultipleSnapshot = struct();
-params.MultipleSnapshot.TypicalDayCount         = 3;
-params.MultipleSnapshot.PeriodCount             = 12;
-params.MultipleSnapshot.TypicalDayWeights_Days  = [255,55,55];
-% Factor的第一、二列分别为GFL-WG可用出力倍率和负荷倍率。
-% 第一、二、三行分别对应普通典型日、低净负荷日和高净负荷日。
-params.MultipleSnapshot.Factor                  = [1.0, 1.0;
-                                                   1.1, 0.9;
-                                                   0.9, 1.0];
-params.MultipleSnapshot.PeriodDurations_Hours   = 2*ones(1,12);
+%% 1. Network
+% 网络基准量、线路修正及同步机网络参数。
+params.Network = struct();
+params.Network.mpc = mpc;
+params.Network.Base_MVA = mpc.baseMVA;
+params.Network.Base_kV  = mpc.bus(1, 10);
+params.Network.Base_kA  = params.Network.Base_MVA / ...
+    params.Network.Base_kV / sqrt(3);
+params.Network.Base_O   = params.Network.Base_kV^2 / ...
+    params.Network.Base_MVA;
+params.Network.Branch_Scale = struct( ...
+    'r', 7/4, ...
+    'x', 7/4, ...
+    'b', 4/7);
+params.Network.Xd_Gen = 0.04;
+params.Network.Gen_Cost_Breakpoints = 0:0.1:1;
 
-% 风电场景参数集中配置在WindScenarios中。默认以原确定性可用出力轨迹为基准，
-% 对每个典型日分别生成低风、基准和高风三条完整日内轨迹。
-params.MultipleSnapshot.WindScenarios = struct();
-params.MultipleSnapshot.WindScenarios.Count          = 3;
-params.MultipleSnapshot.WindScenarios.Names          = {'low','base','high'};
-params.MultipleSnapshot.WindScenarios.Probabilities  = [0.25,0.50,0.25];
-params.MultipleSnapshot.WindScenarios.ScaleFactors   = [0.8,1.0,1.2];
-
-%% 2. 线路参数修正
-% r、x、b:MATPOWER branch表中的电阻、电抗和线路充电电纳。
-params.BranchScale = struct();
-params.BranchScale.r = 7/4;
-params.BranchScale.x = 7/4;
-params.BranchScale.b = 4/7;
-
-%% 3. 同步机与变流器基础参数
-% Xd_Gen:同步机次暂态电抗（系统基准；可为标量或逐机组向量）。
-% GenCostLoading:构造同步机固定成本项，现在5%出力时的成本为固定成本。
-params.Xd_Gen = 0.04;
-params.GenCostLoading = 0.05;
-
-% Gen_Pmin_MW为同步机最小有功出力，当前沿用20%额定出力。
-params.Gen_Pmin_MW = 0.2*mpc.gen(:,9);
-
-% GenCostBreakpoints为归一化同步机出力的分段透视割切点。
-params.GenCostBreakpoints = 0:0.1:1;
-
-% UC参数按同步机额定功率和5%额定出力成本统一生成。
-% 上、下爬坡速率均为0.2倍额定功率，最小开、停机时段数均为1。
-% 单次启动、关停成本分别为5%额定出力成本的1.0倍和0.25倍。
-gen_cost_at_5pct = mpc.gencost(:,5).*((params.GenCostLoading*mpc.gen(:,9)).^2) + ...
-    mpc.gencost(:,6).*(params.GenCostLoading*mpc.gen(:,9));
-params.UC = struct();
-params.UC.RampUp_Rate_MW_per_Hour   = 0.2*mpc.gen(:,9);
-params.UC.RampDown_Rate_MW_per_Hour = 0.2*mpc.gen(:,9);
-params.UC.MinUp_Periods              = ones(size(mpc.gen,1),1);
-params.UC.MinDown_Periods            = ones(size(mpc.gen,1),1);
-params.UC.Startup_Cost               = 1.0*gen_cost_at_5pct;
-params.UC.Shutdown_Cost              = 0.25*gen_cost_at_5pct;
-
-% GFL_WG用于显式记录已建GFL-WG场站参数。
-% PN_MW可以为标量、与GFL_Built_Nodes等长的向量，或全节点向量。
-% Curtailment_Cost_per_MWh为单位弃风惩罚成本，单位为$/MWh。
+%% 2. GFL_WG
+% 已建GFL-WG场站及其LVRT、电流和弃风成本参数。
 params.GFL_WG = struct();
+params.GFL_WG.Built_Nodes = [11, 18];
 params.GFL_WG.PN_MW = 60;
 params.GFL_WG.Curtailment_Cost_per_MWh = 30;
-% ver_2 GFL-WG LVRT parameters, expressed on the GFL-WG rated-power base.
 params.GFL_WG.K_Q = 1.5;
-params.GFL_WG.I_GFL_N = 1.0;
-params.GFL_WG.V_LVRT_on = 0.9;
-params.GFL_WG.V_LVRT_sat = 0.2;
-params.GFL_WG.Delta_I_GFL = 1.05;
+params.GFL_WG.I_N_Rated = 1.0;
+params.GFL_WG.V_LVRT_On = 0.9;
+params.GFL_WG.V_LVRT_Sat = 0.2;
+params.GFL_WG.Delta_I_Rated = 1.05;
 
-%% 4. GFM-ES规划参数
-% GFM_Candidates:允许投建GFM-ES的节点集合。
-params.GFM_Candidates = [9, 15, 19];
-
-% GFL_Built_Nodes:已建GFL节点集合。
-params.GFL_Built_Nodes = [11, 18];
-
-% GFM_Modules定义模块化GFM-ES参数表。
+%% 3. GFM_Modules
+% 模块候选位置、模块额定参数、储能参数、电气参数和成本参数。
 params.GFM_Modules = struct();
-params.GFM_Modules.MaxModulesPerCandidate = 2;
-params.GFM_Modules.N_Module_Max           = 4;
-params.GFM_Modules.EnforceSequentialBuild = true;
-params.GFM_Modules.Bus           = [9, 9, 15, 15, 19, 19];
-params.GFM_Modules.ModuleIndex   = [1, 2, 1, 2, 1, 2];
 
-% 额定功率与单位功率成本
-params.GFM_Modules.PN_MW         = [30, 30, 30, 30, 30, 30];
-params.GFM_Modules.Annual_Cost_Power_per_MW = ...
+params.GFM_Modules.Configurations = struct();
+params.GFM_Modules.Configurations.Max_Modules_Per_Candidate = 2;
+params.GFM_Modules.Configurations.Enforce_Sequential_Build = true;
+params.GFM_Modules.Configurations.N_Module_Max = 4;
+
+params.GFM_Modules.Candidates = struct();
+params.GFM_Modules.Candidates.Bus = [9, 15, 19];
+
+params.GFM_Modules.Module = struct();
+params.GFM_Modules.Module.Bus = [9, 9, 15, 15, 19, 19];
+params.GFM_Modules.Module.Module_Index = [1, 2, 1, 2, 1, 2];
+params.GFM_Modules.Module.PN_MW = [30, 30, 30, 30, 30, 30];
+
+params.GFM_Modules.Costs = struct();
+params.GFM_Modules.Costs.Annual_Cost_Power_per_MW = ...
     [9600, 9600, 9600, 9600, 9600, 9600];
-
-% 储能参数：当前采用保守默认值，后续可按实际设备参数替换。
-% 每个模块额定储存能量为60 MWh，充电效率和放电效率均为0.9。
-params.GFM_Modules.Rated_Energy_MWh = 2*params.GFM_Modules.PN_MW;
-params.GFM_Modules.Annual_Cost_Energy_per_MWh = ...
+params.GFM_Modules.Costs.Annual_Cost_Energy_per_MWh = ...
     [37120, 37120, 37120, 37120, 37120, 37120];
-% params.GFM_Modules.Annual_Cost_Energy_per_MWh = zeros(1,6);
 
-% SOC上限、初始值和下限分别为0.9、0.5和0.1。
-params.GFM_Modules.Charge_Efficiency    = 0.9;
-params.GFM_Modules.Discharge_Efficiency = 0.9;
-params.GFM_Modules.SOC_Max              = 0.9;
-params.GFM_Modules.SOC_Initial          = 0.5;
-params.GFM_Modules.SOC_Min              = 0.1;
+params.GFM_Modules.Storage = struct();
+params.GFM_Modules.Storage.Rated_Energy_MWh = ...
+    2 * params.GFM_Modules.Module.PN_MW;
+params.GFM_Modules.Storage.Charge_Efficiency = 0.9;
+params.GFM_Modules.Storage.Discharge_Efficiency = 0.9;
+params.GFM_Modules.Storage.SOC_Max = 0.9;
+params.GFM_Modules.Storage.SOC_Initial = 0.5;
+params.GFM_Modules.Storage.SOC_Min = 0.1;
 
-% 投建GFM-ES的总成本
-params.GFM_Modules.Cost_Conv_GFM = ...
-    params.GFM_Modules.Annual_Cost_Power_per_MW .* params.GFM_Modules.PN_MW + ...
-    params.GFM_Modules.Annual_Cost_Energy_per_MWh .* params.GFM_Modules.Rated_Energy_MWh;
+params.GFM_Modules.Electrical = struct();
+params.GFM_Modules.Electrical.I_Post_Multiplier = [3, 3, 3, 3, 3, 3];
+% X_GFM_res先按设备基准输入，再换算为系统基准。
+x_GFM_Res_Device = [0.04, 0.04, 0.04, 0.04, 0.04, 0.04];
+params.GFM_Modules.Electrical.X_GFM_vir = ...
+    (1 ./ params.GFM_Modules.Electrical.I_Post_Multiplier - ...
+    x_GFM_Res_Device) .* params.Network.Base_MVA ./ ...
+    params.GFM_Modules.Module.PN_MW;
+params.GFM_Modules.Electrical.X_GFM_res = ...
+    x_GFM_Res_Device .* params.Network.Base_MVA ./ ...
+    params.GFM_Modules.Module.PN_MW;
 
-% 故障电流倍数
-params.GFM_Modules.I_Post_Multiplier = [3, 3, 3, 3, 3, 3];
+%% 4. Security
+% 短路电流上限、SCR下限及源在线约束。
+params.Security = struct();
+params.Security.I_limit_kA = 12.25;
+params.Security.SCR_min = 3;
+params.Security.Require_Source_Online = true;
 
-% 运行与虚拟阻抗：设备级标幺值->系统级标幺值
-params.GFM_Modules.X_GFM_res = [0.04, 0.04, 0.04, 0.04, 0.04, 0.04];
-params.GFM_Modules.X_GFM_vir = (1./params.GFM_Modules.I_Post_Multiplier - ...
-    params.GFM_Modules.X_GFM_res)*params.base_MVA./params.GFM_Modules.PN_MW;
-params.GFM_Modules.X_GFM_res        = params.GFM_Modules.X_GFM_res*...
-    params.base_MVA./params.GFM_Modules.PN_MW;
+%% 5. Multiple_Snapshot
+% 典型日、时段、负荷曲线以及风电场景参数。
+params.Multiple_Snapshot = struct();
 
-%% 5. 确定性逐时负荷与GFL-WG基准可用出力
-% 逐时数据按[节点,典型日,时段]三维数组保存。
-% 负荷采用MOST的12时段确定性系统负荷曲线相对其基准负荷的变化倍率。
-% GFL-WG采用MOST的12时段确定性风电出力倍率作为场景缩放基准轨迹。
-D = params.MultipleSnapshot.TypicalDayCount;
-T = params.MultipleSnapshot.PeriodCount;
-typical_day_factor = params.MultipleSnapshot.Factor;
+params.Multiple_Snapshot.Time = struct();
+params.Multiple_Snapshot.Time.Typical_Day_Count = 3;
+params.Multiple_Snapshot.Time.Period_Count = 12;
+params.Multiple_Snapshot.Time.Typical_Day_Weights_Days = [255, 55, 55];
+params.Multiple_Snapshot.Time.Period_Durations_Hours = 2 * ones(1, 12);
 
-% 每个典型日均应分别给定GFL-WG可用出力Per倍率和负荷倍率。
-if ~isequal(size(typical_day_factor), [D, 2])
-    error('MultipleSnapshot.Factor的维度应为TypicalDayCount×2，即%d×2。',D);
+params.Multiple_Snapshot.Profiles = struct();
+% Factor每行对应一个典型日，每列分别对应GFL-WG出力和负荷。
+params.Multiple_Snapshot.Profiles.Factor = [1.0, 1.0; ...
+                                             1.1, 0.9; ...
+                                             0.9, 1.0];
+
+params.Multiple_Snapshot.Wind_Scenarios = struct();
+params.Multiple_Snapshot.Wind_Scenarios.Count = 3;
+params.Multiple_Snapshot.Wind_Scenarios.Names = {'low', 'base', 'high'};
+params.Multiple_Snapshot.Wind_Scenarios.Probabilities = [0.25, 0.50, 0.25];
+params.Multiple_Snapshot.Wind_Scenarios.Scale_Factors = [0.8, 1.0, 1.2];
+params.Multiple_Snapshot.Wind_Scenarios.Generation_Mode = 'scale_base_profiles';
+
+% 由MOST示例曲线生成确定性逐时基准数据。
+D = params.Multiple_Snapshot.Time.Typical_Day_Count;
+T = params.Multiple_Snapshot.Time.Period_Count;
+Typical_Day_Factor = params.Multiple_Snapshot.Profiles.Factor;
+if ~isequal(size(Typical_Day_Factor), [D, 2])
+    error(['Multiple_Snapshot.Profiles.Factor的维度应为', ...
+        'Typical_Day_Count×2，即%d×2。'], D);
 end
-if any(~isfinite(typical_day_factor(:))) || any(typical_day_factor(:) <= 0)
-    error('MultipleSnapshot.Factor中的GFL-WG可用出力倍率和负荷倍率均应为有限正数。');
+if any(~isfinite(Typical_Day_Factor(:))) || any(Typical_Day_Factor(:) <= 0)
+    error('Multiple_Snapshot.Profiles.Factor中的缩放因子应为有限正数。');
 end
 
-% ex_load_profile配套的MOST基准算例为ex_case3b。
-% 各时段负荷倍率等于MOST逐时系统负荷除以MOST系统基准负荷。
-MOST_load_profile = ex_load_profile;
-MOST_base_case    = loadcase('ex_case3b');
-MOST_load_base_MW = total_load(MOST_base_case.bus,MOST_base_case.gen);
-load_total_MW     = MOST_load_profile.values(:,1,1);
-load_factor       = load_total_MW/MOST_load_base_MW;
-for i = 1:size(load_factor,1)/2
-    temp = load_factor(i);
-    load_factor(i) = load_factor(size(load_factor,1)+1-i);
-    load_factor(size(load_factor,1)+1-i) = temp;
+MOST_Load_Profile = ex_load_profile;
+MOST_Base_Case = loadcase('ex_case3b');
+MOST_Load_Base_MW = total_load(MOST_Base_Case.bus, MOST_Base_Case.gen);
+Load_Total_MW = MOST_Load_Profile.values(:, 1, 1);
+Load_Factor = Load_Total_MW / MOST_Load_Base_MW;
+for i = 1:size(Load_Factor, 1) / 2
+    temp = Load_Factor(i);
+    Load_Factor(i) = Load_Factor(end + 1 - i);
+    Load_Factor(end + 1 - i) = temp;
 end
-load_node_period  = mpc.bus(:,3)*load_factor.';
-params.MultipleSnapshot.LoadFactor = load_factor;
+Load_Node_Period = mpc.bus(:, 3) * Load_Factor.';
+params.Multiple_Snapshot.Profiles.Load_Factor = Load_Factor;
+params.Multiple_Snapshot.Profiles.Load_P_MW = ...
+    reshape(Load_Node_Period, size(mpc.bus, 1), 1, T) .* ...
+    reshape(Typical_Day_Factor(:, 2), 1, D, 1);
 
-% Factor第二列用于逐典型日缩放负荷，得到[节点,典型日,时段]三维数据。
-params.MultipleSnapshot.Load_P_MW = ...
-    reshape(load_node_period, size(mpc.bus,1), 1, T).* ...
-    reshape(typical_day_factor(:,2), 1, D, 1);
-
-% ex_wind_profile_d中的values为风电机组额定功率的确定性可用出力倍率。
-MOST_wind_profile     = ex_wind_profile_d;
-wind_available_factor = MOST_wind_profile.values(:,1,1);
-for i = 1:size(wind_available_factor,1)/2
-    temp = wind_available_factor(i);
-    wind_available_factor(i) = wind_available_factor(size(wind_available_factor,1)+1-i);
-    wind_available_factor(size(wind_available_factor,1)+1-i) = temp;
+MOST_Wind_Profile = ex_wind_profile_d;
+Wind_Available_Factor = MOST_Wind_Profile.values(:, 1, 1);
+for i = 1:size(Wind_Available_Factor, 1) / 2
+    temp = Wind_Available_Factor(i);
+    Wind_Available_Factor(i) = Wind_Available_Factor(end + 1 - i);
+    Wind_Available_Factor(end + 1 - i) = temp;
 end
-clear i temp
-GFL_rated_node        = zeros(size(mpc.bus,1),1);
-GFL_rated_node(params.GFL_Built_Nodes) = params.GFL_WG.PN_MW;
-GFL_node_period = GFL_rated_node*wind_available_factor.';
+GFL_Rated_Node = zeros(size(mpc.bus, 1), 1);
+GFL_Rated_Node(params.GFL_WG.Built_Nodes) = params.GFL_WG.PN_MW;
+GFL_Node_Period = GFL_Rated_Node * Wind_Available_Factor.';
+params.Multiple_Snapshot.Profiles.GFL_Available_P_MW = ...
+    reshape(GFL_Node_Period, size(mpc.bus, 1), 1, T) .* ...
+    reshape(Typical_Day_Factor(:, 1), 1, D, 1);
 
-% Factor第一列用于逐典型日缩放GFL-WG可用出力，保持各场站日内曲线形状不变。
-params.MultipleSnapshot.GFL_Available_P_MW = ...
-    reshape(GFL_node_period, size(mpc.bus,1), 1, T).* ...
-    reshape(typical_day_factor(:,1), 1, D, 1);
+%% 6. UC
+% 同步机最小出力、爬坡、最小开停机时间和启停成本。
+params.UC = struct();
+params.UC.Cost_Loading = 0.05;
+params.UC.Gen_Pmin_MW = 0.2 * mpc.gen(:, 9);
+Gen_Cost_At_5_Pct = mpc.gencost(:, 5) .* ...
+    (params.UC.Cost_Loading * mpc.gen(:, 9)).^2 + ...
+    mpc.gencost(:, 6) .* ...
+    (params.UC.Cost_Loading * mpc.gen(:, 9));
+params.UC.Ramp_Up_Rate_MW_per_Hour = 0.2 * mpc.gen(:, 9);
+params.UC.Ramp_Down_Rate_MW_per_Hour = 0.2 * mpc.gen(:, 9);
+params.UC.Min_Up_Periods = ones(size(mpc.gen, 1), 1);
+params.UC.Min_Down_Periods = ones(size(mpc.gen, 1), 1);
+params.UC.Startup_Cost = 1.0 * Gen_Cost_At_5_Pct;
+params.UC.Shutdown_Cost = 0.25 * Gen_Cost_At_5_Pct;
 
-%% 6. 安全约束参数
-% I_limit_kA:短路电流上限，单位为kA，可以为标量或全节点向量。
-params.I_limit_kA = 12.25;
-
-% SCR_min:经典短路比下限，无量纲。
-params.SCR_min = 3;
-
-% Require_Source_Online:是否要求每个时刻至少一个同步机或GFM-ES模块投运/投建。
-params.Require_Source_Online = true;
-
-%% 7. 求解器与数值参数
-% KZ:放大阻抗元素，改善数值稳健性。
-params.KZ = 1e3;
-
-% ZBoundMargin:枚举离散投运组合估计Z元素上下界时保留的安全裕度。
-params.ZBoundMargin = 0.005;
-
-% ERR_TOL_FACTOR:会乘以KZ得到阻抗矩阵约束的绝对容差。
-params.ERR_TOL_FACTOR = 1e-6;
-
-%% 8. 求解性能参数
-% 日常开发采用0.5%%相对间隙和10分钟时限；最终论文算例可单独收紧。
+%% 7. Solver
+% 数值稳定性、Gurobi性能及两阶段求解参数。
 params.Solver = struct();
+params.Solver.KZ = 1e3;
+params.Solver.Z_Bound_Margin = 0.005;
+params.Solver.ERR_TOL_Factor = 1e-6;
 params.Solver.Threads = 0;
-params.Solver.MIPGap = 0.005;
-params.Solver.TimeLimit = 600;
-params.Solver.MIPFocus = 1;
+params.Solver.MIP_Gap = 0.005;
+params.Solver.Time_Limit = 600;
+params.Solver.MIP_Focus = 1;
 params.Solver.Heuristics = 0.2;
-params.Solver.NoRelHeurWork = 0;
-% 将年成本目标缩放到约10的数量级，不改变最优解与原始成本输出。
-params.Solver.ObjectiveScale = 1e5;
-
-% 两阶段求解：第一阶段优先寻找高质量可行解，第二阶段利用该解强化下界并证明最优性。
-% 第二阶段允许0.5%的相对最优性间隙，并采用两路并发MIP搜索降低搜索路径偶然性。
-% 若达到3600秒时限仍有更大间隙，程序会保存当前最优可行解及其最优性间隙。
-params.Solver.TwoStage = struct();
-params.Solver.TwoStage.Enabled = true;
-params.Solver.TwoStage.Stage1 = struct( ...
+params.Solver.No_Rel_Heur_Work = 0;
+params.Solver.Objective_Scale = 1e5;
+params.Solver.Two_Stage = struct();
+params.Solver.Two_Stage.Enabled = true;
+params.Solver.Two_Stage.Stage_1 = struct( ...
     'Name', 'feasible-search', ...
-    'TimeLimit', 300, ...
-    'MIPGap', 0.3, ...
-    'MIPFocus', 1, ...
+    'Time_Limit', 300, ...
+    'MIP_Gap', 0.3, ...
+    'MIP_Focus', 1, ...
     'Heuristics', 0.2);
-params.Solver.TwoStage.Stage2 = struct( ...
+params.Solver.Two_Stage.Stage_2 = struct( ...
     'Name', 'optimality-proof', ...
-    'TimeLimit', 1800, ...
-    'MIPGap', 0.005, ...
-    'MIPFocus', 3, ...
+    'Time_Limit', 1800, ...
+    'MIP_Gap', 0.005, ...
+    'MIP_Focus', 3, ...
     'Heuristics', 0.01, ...
-    'ConcurrentMIP', 2);
+    'Concurrent_MIP', 2);
 
-%% 9. 写出JSON文件
-json_text = jsonencode(params, 'PrettyPrint', true);
-
-fid = fopen(output_file, 'w', 'n', 'UTF-8');
+%% 8. 写出JSON文件
+JSON_Text = jsonencode(params, 'PrettyPrint', true);
+fid = fopen(Output_File, 'w', 'n', 'UTF-8');
 if fid < 0
-    error('Cannot open parameter output file: %s', output_file);
+    error('Cannot open parameter output file: %s', Output_File);
 end
-fprintf(fid, '%s\n', json_text);
+fprintf(fid, '%s\n', JSON_Text);
 fclose(fid);
+fprintf('已生成参数文件：%s\n', Output_File);
 
-fprintf('已生成参数文件：%s\n', output_file);
-
-%% 10. 清除本脚本生成的变量
-clear D T ans fid gen_cost_at_5pct GFL_node_period GFL_rated_node json_text load_node_period ...
-    load_factor load_total_MW MOST_base_case MOST_load_base_MW ...
-    MOST_load_profile MOST_wind_profile output_file param_dir params ...
-    typical_day_factor wind_available_factor mpc
+%% 9. 清除本脚本生成的临时变量
+clear D T ans fid Gen_Cost_At_5_Pct GFL_Node_Period GFL_Rated_Node i ...
+    JSON_Text Load_Factor Load_Node_Period Load_Total_MW ...
+    MOST_Base_Case MOST_Load_Base_MW MOST_Load_Profile MOST_Wind_Profile ...
+    Output_File Parameter_Directory params temp Typical_Day_Factor ...
+    Wind_Available_Factor x_GFM_Res_Device mpc

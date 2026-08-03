@@ -1,27 +1,27 @@
-function project_root = find_project_root(start_path)
+function Project_Root = find_project_root(Start_Path)
 %% 本函数功能是从给定路径向上查找项目根目录。
 
-if nargin < 1 || isempty(start_path)
-    start_path = pwd;
+if nargin < 1 || isempty(Start_Path)
+    Start_Path = pwd;
 end
 
-if isfolder(start_path)
-    current_dir = start_path;
+if isfolder(Start_Path)
+    Current_Directory = Start_Path;
 else
-    current_dir = fileparts(start_path);
+    Current_Directory = fileparts(Start_Path);
 end
 
 while true
-    if is_project_root(current_dir)
-        project_root = current_dir;
+    if is_project_root(Current_Directory)
+        Project_Root = Current_Directory;
         return;
     end
 
-    parent_dir = fileparts(current_dir);
-    if strcmp(parent_dir, current_dir)
-        error('Project root was not found from path: %s', start_path);
+    Parent_Directory = fileparts(Current_Directory);
+    if strcmp(Parent_Directory, Current_Directory)
+        error('Project root was not found from path: %s', Start_Path);
     end
-    current_dir = parent_dir;
+    Current_Directory = Parent_Directory;
 end
 
 end

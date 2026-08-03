@@ -1,53 +1,53 @@
-function [Data, output_dir] = load_figure_data(result_file, output_dir, param_file, category, scenario_index)
+function [Data, Output_Directory] = load_figure_data(Result_File, Output_Directory, Parameter_File, category, Scenario_Index)
 %% 加载绘图所需的结果、参数和公共数据。
 
-figure_dir = fileparts(mfilename('fullpath'));
-project_root = fileparts(fileparts(fileparts(figure_dir)));
+Figure_Directory = fileparts(mfilename('fullpath'));
+Project_Root = fileparts(fileparts(fileparts(Figure_Directory)));
 
-if nargin < 1 || isempty(result_file)
-    result_file = find_latest_result(fullfile(project_root, 'results'));
+if nargin < 1 || isempty(Result_File)
+    Result_File = find_latest_result(fullfile(Project_Root, 'results'));
 end
-if nargin < 2 || isempty(output_dir)
-    output_dir = fullfile(project_root, 'figs', category);
+if nargin < 2 || isempty(Output_Directory)
+    Output_Directory = fullfile(Project_Root, 'figs', category);
 end
-if nargin < 3 || isempty(param_file)
-    param_file = fullfile(project_root, 'data', 'params', ...
+if nargin < 3 || isempty(Parameter_File)
+    Parameter_File = fullfile(Project_Root, 'data', 'params', ...
         'multiple_snapshot_default_params.json');
 end
 
-result_file = char(result_file);
-output_dir = char(output_dir);
-param_file = char(param_file);
+Result_File = char(Result_File);
+Output_Directory = char(Output_Directory);
+Parameter_File = char(Parameter_File);
 
-if ~isfile(result_file)
-    error('结果文件不存在：%s', result_file);
+if ~isfile(Result_File)
+    error('结果文件不存在：%s', Result_File);
 end
-if ~isfile(param_file)
-    error('参数文件不存在：%s', param_file);
+if ~isfile(Parameter_File)
+    error('参数文件不存在：%s', Parameter_File);
 end
-if ~isfolder(output_dir)
-    mkdir(output_dir);
+if ~isfolder(Output_Directory)
+    mkdir(Output_Directory);
 end
 
-loaded = load(result_file, 'Result');
+loaded = load(Result_File, 'Result');
 if ~isfield(loaded, 'Result') || ~isstruct(loaded.Result)
-    error('MAT文件必须包含Result结构体：%s', result_file);
+    error('MAT文件必须包含Result结构体：%s', Result_File);
 end
 
-params = jsondecode(fileread(param_file));
+params = jsondecode(fileread(Parameter_File));
 if nargin < 5
-    scenario_index = [];
+    Scenario_Index = [];
 end
-Data = prepare_figure_data(loaded.Result, params, result_file, param_file, ...
-    scenario_index);
+Data = prepare_figure_data(loaded.Result, params, Result_File, Parameter_File, ...
+    Scenario_Index);
 
 end
 
-function result_file = find_latest_result(results_dir)
-files = dir(fullfile(results_dir, 'multiple_snapshot_planning_result_*.mat'));
+function Result_File = find_latest_result(Results_Directory)
+files = dir(fullfile(Results_Directory, 'multiple_snapshot_planning_result_*.mat'));
 if isempty(files)
-    error('在results目录中没有找到多时段结果文件：%s', results_dir);
+    error('在results目录中没有找到多时段结果文件：%s', Results_Directory);
 end
 [~, idx] = max([files.datenum]);
-result_file = fullfile(files(idx).folder, files(idx).name);
+Result_File = fullfile(files(idx).folder, files(idx).name);
 end

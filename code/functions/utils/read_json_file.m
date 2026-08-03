@@ -1,10 +1,10 @@
-function data = read_json_file(file_path)
+function data = read_json_file(File_Path)
 %% 本函数功能是读取JSON参数文件并解码为MATLAB结构体。
 
-if exist(file_path, 'file') ~= 2
-    error('JSON file does not exist: %s', file_path);
+if exist(File_Path, 'file') ~= 2
+    error('JSON file does not exist: %s', File_Path);
 end
 
-data = jsondecode(fileread(file_path));
+data = jsondecode(fileread(File_Path));
 
 end

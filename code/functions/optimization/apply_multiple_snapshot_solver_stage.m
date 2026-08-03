@@ -1,24 +1,20 @@
-function CONF = apply_multiple_snapshot_solver_stage(CONF, stage_config)
+function CONF = apply_multiple_snapshot_solver_stage(CONF, Stage_Configuration)
 %% 将两阶段配置中的覆盖项应用到当前Gurobi参数。
 
-if nargin < 2 || isempty(stage_config)
+if nargin < 2 || isempty(Stage_Configuration)
     return;
 end
 
 % Name只用于结果标记，不应传递给Gurobi。
-stage_fields = fieldnames(stage_config);
-for k = 1:numel(stage_fields)
-    field_name = stage_fields{k};
-    if strcmp(field_name, 'Name')
+Stage_Fields = fieldnames(Stage_Configuration);
+for k = 1:numel(Stage_Fields)
+    Field_Name = Stage_Fields{k};
+    if strcmp(Field_Name, 'Name')
         continue;
     end
-    CONF.Solver.(field_name) = stage_config.(field_name);
+    CONF.Solver.(Field_Name) = Stage_Configuration.(Field_Name);
 end
 
-if isfield(stage_config, 'Name')
-    CONF.SolveStage = char(stage_config.Name);
-else
-    CONF.SolveStage = '';
-end
+CONF.Solver.Solve_Stage = char(Stage_Configuration.Name);
 
 end

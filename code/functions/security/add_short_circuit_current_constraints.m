@@ -1,45 +1,37 @@
-function C_sc = add_short_circuit_current_constraints( ...
-    CONF, u_GFL, u_GFM_mod, W_GFM, X_diag, DeltaY_abs_mod, PN_pu, ...
-    X_diag_L, X_diag_U, Phi_GFL)
+function [C_Sc, C_McCormick] = add_short_circuit_current_constraints( ...
+    CONF, u_GFL, u_GFM_Module, W_GFM, X_Diag, Delta_Y_Abs_Module, ...
+    X_Diag_L, X_Diag_U, Phi_GFL)
 %% 本函数功能是构造短路电流水平约束。
 % X_diag为节点自阻抗虚部对角元素。
 % W_GFM用于线性化u_GFM_mod.*X_diag(module_bus)。
-% 约束用于限制故障点短路电流不超过CONF.I_limit。
+% Phi_GFL为非故障节点GFL-WG增量电流的配置相关转移项。
+% 主体约束对应文档2.4.4式(1.74)-(1.78)、(1.85)。
 
-C_sc = [];
-if nargin < 10 || isempty(Phi_GFL)
-    Phi_GFL = zeros(size(X_diag));
+CONF = normalize_multiple_snapshot_conf(CONF);
+
+C_Sc = [];
+C_McCormick = [];
+if nargin < 9 || isempty(Phi_GFL)
+    Phi_GFL = zeros(size(X_Diag));
 end
 
-% GFL和GFM-ES的额定故障电流贡献
-I_GFLP = CONF.I_post_GFL_Node(:);
-if isfield(CONF,'I_GFL_N_pu_Node')
-    I_GFLN = CONF.I_GFL_N_pu_Node(:);
-else
-    I_GFLN = PN_pu(:);
-end
-if isfield(CONF,'Delta_I_GFL_pu_Node')
-    DeltaI_GFL = CONF.Delta_I_GFL_pu_Node(:);
-else
-    DeltaI_GFL = zeros(size(I_GFLN));
-end
+% 故障节点GFL-WG的额定基值电流在推导中抵消，仅保留饱和增量电流。
+Delta_I_GFL = CONF.Delta_I_GFL_pu_Node(:);
 
-% 线性化GFM-ES模块投建状态与其接入节点自阻抗的乘积
-X_GFM_diag = CONF.GFM_Module_Loc_Mat'*X_diag;
-X_GFM_diag_L = CONF.GFM_Module_Loc_Mat'*X_diag_L;
-X_GFM_diag_U = CONF.GFM_Module_Loc_Mat'*X_diag_U;
-C_sc = [C_sc, add_binary_product_bounds(W_GFM, X_GFM_diag, u_GFM_mod, X_GFM_diag_L, X_GFM_diag_U)];
+% 文档2.5 McCormick线性化约束，式(1.88)：GFM-ES投建状态与自阻抗乘积。
+X_GFM_Diag = CONF.GFM_Module_Loc_Mat'*X_Diag;
+X_GFM_Diag_L = CONF.GFM_Module_Loc_Mat'*X_Diag_L;
+X_GFM_Diag_U = CONF.GFM_Module_Loc_Mat'*X_Diag_U;
+C_McCormick = [C_McCormick, add_binary_product_bounds(W_GFM, X_GFM_Diag, u_GFM_Module, X_GFM_Diag_L, X_GFM_Diag_U)];
 
-% 已建GFL状态为给定参数，可直接与连续变量相乘
-W_GFL_fixed = u_GFL.*X_diag;
-W_GFL_delta_fixed = u_GFL.*DeltaI_GFL.*X_diag;
+% 已建GFL-WG状态为给定参数，可直接与连续自阻抗相乘。
+W_GFL_Delta_Fixed = u_GFL.*Delta_I_GFL.*X_Diag;
 
 % 同一故障节点上的多个GFM-ES模块贡献按等效电纳变化量累加
-GFM_delta_term = CONF.GFM_Module_Loc_Mat*(DeltaY_abs_mod(:).*W_GFM);
+GFM_Delta_Term = CONF.GFM_Module_Loc_Mat*(Delta_Y_Abs_Module(:).*W_GFM);
 
-% 短路电流上限约束
-C_sc = [C_sc, CONF.KZ + Phi_GFL <= ...
-    CONF.I_limit.*X_diag + GFM_delta_term - ...
-    (I_GFLP+I_GFLN).*W_GFL_fixed - W_GFL_delta_fixed];
+% 文档2.4.4 短路电流水平约束，式(1.74)-(1.85)：短路电流上限。
+C_Sc = [C_Sc, CONF.KZ + Phi_GFL <= ...
+    CONF.I_limit.*X_Diag + GFM_Delta_Term - W_GFL_Delta_Fixed];
 
 end

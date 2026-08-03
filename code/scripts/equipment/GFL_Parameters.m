@@ -13,7 +13,7 @@
 clear; clc; close all;
 
 %% 1. LCL滤波器与整定目标参数
-% 下列参数应与当前Simulink模型和Invert_Parameters.m保持一致。
+% 下列参数应与当前Simulink模型和GFL_Parameters.m保持一致。
 L1   = 1e-3;   % 逆变器侧电感
 R_L1 = 10;     % 逆变器侧电感串联电阻，同时用于模型中的电阻补偿项
 L2   = 600e-6; % 网侧电感

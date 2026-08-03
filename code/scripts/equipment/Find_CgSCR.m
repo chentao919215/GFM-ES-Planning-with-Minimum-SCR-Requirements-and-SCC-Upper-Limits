@@ -3,196 +3,192 @@
 %
 % The script assumes that a larger SCR is not less stable than a smaller
 % SCR. It first finds one converged SCR and one non-converged SCR, then uses
-% bisection until the two SCR values are closer than cfg.scrTolerance.
+% bisection until the two SCR values are closer than cfg.SCR_Tolerance.
 %
 % Result variables written to the base workspace:
 %   scrConvergenceResult
 %   scrConvergenceHistory
 
 cfg = localDefaultConfig();
-scrConvergenceResult = localFindScrBoundary(cfg);
-scrConvergenceHistory = scrConvergenceResult.history;
+SCR_Convergence_Result = localFindScrBoundary(cfg);
+SCR_Convergence_History = SCR_Convergence_Result.history;
 
-assignin('base', 'scrConvergenceResult', scrConvergenceResult);
-assignin('base', 'scrConvergenceHistory', scrConvergenceHistory);
+assignin('base', 'scrConvergenceResult', SCR_Convergence_Result);
+assignin('base', 'scrConvergenceHistory', SCR_Convergence_History);
 
 fprintf('\nSCR boundary search finished.\n');
-fprintf('  Converged SCR     : %.6f\n', scrConvergenceResult.convergedSCR);
-fprintf('  Non-converged SCR : %.6f\n', scrConvergenceResult.nonConvergedSCR);
-fprintf('  SCR gap           : %.6f\n', scrConvergenceResult.scrGap);
-fprintf('  Midpoint estimate : %.6f\n', scrConvergenceResult.criticalSCRMidpoint);
+fprintf('  Converged SCR     : %.6f\n', SCR_Convergence_Result.convergedSCR);
+fprintf('  Non-converged SCR : %.6f\n', SCR_Convergence_Result.nonConvergedSCR);
+fprintf('  SCR gap           : %.6f\n', SCR_Convergence_Result.scrGap);
+fprintf('  Midpoint estimate : %.6f\n', SCR_Convergence_Result.criticalSCRMidpoint);
 
 %% Local functions
 
 function cfg = localDefaultConfig()
-    scriptPath = mfilename('fullpath');
-    if isempty(scriptPath)
-        workDir = pwd;
+    Script_Path = mfilename('fullpath');
+    if isempty(Script_Path)
+        Work_Directory = pwd;
     else
-        workDir = fileparts(scriptPath);
+        Work_Directory = fileparts(Script_Path);
     end
 
-    cfg.workDir = workDir;
-    cfg.modelName = 'Grid_Following_Inverters';
-    projectRoot = fileparts(fileparts(fileparts(workDir)));
-    cfg.modelDir = fullfile(projectRoot, 'simulink', 'models');
-    cfg.modelFile = fullfile(cfg.modelDir, [cfg.modelName, '.slx']);
-    cfg.parameterScript = fullfile(workDir, 'Invert_Parameters.m');
-    cfg.signalName = 'v_PCC_mag';
+    cfg.Work_Directory = Work_Directory;
+    cfg.Model_Name = 'Grid_Following_Inverters';
+    Project_Root = fileparts(fileparts(fileparts(Work_Directory)));
+    cfg.Model_Directory = fullfile(Project_Root, 'simulink', 'models');
+    cfg.Model_File = fullfile(cfg.Model_Directory, [cfg.Model_Name, '.slx']);
+    cfg.Parameter_Script = fullfile(Work_Directory, 'GFL_Parameters.m');
+    cfg.Signal_Name = 'v_PCC_mag';
 
-    cfg.stopTime = 1.0;
-    cfg.tailWindow = [0.95, 1.00];
+    cfg.Stop_Time = 1.0;
+    cfg.Tail_Window = [0.95, 1.00];
 
     % Search settings. This value is intentionally below 0.01.
-    cfg.scrTolerance = 0.005;
-    cfg.bracketScale = 2.0;
-    cfg.scrMin = 0.05;
-    cfg.scrMax = 20.0;
-    cfg.initialSCR = NaN;  % NaN means: use SCR from Invert_Parameters.m.
-    cfg.maxBisectionIterations = 40;
-    cfg.maxBracketSteps = 20;
+    cfg.SCR_Tolerance = 0.005;
+    cfg.Bracket_Scale = 2.0;
+    cfg.SCR_Min = 0.05;
+    cfg.SCR_Max = 20.0;
+    cfg.Initial_SCR = NaN;  % NaN means: use SCR from GFL_Parameters.m.
+    cfg.Max_Bisection_Iterations = 40;
+    cfg.Max_Bracket_Steps = 20;
 
     % Convergence thresholds, all normalized by V_base.
-    cfg.rippleLimitPu = 0.010;          % Tail-window peak-to-peak limit.
-    cfg.stdLimitPu = 0.003;             % Tail-window standard deviation limit.
-    cfg.slopeLimitPuPerSec = 0.05;      % Linear trend slope limit.
-    cfg.oscillationAmpLimitPu = 0.003;  % Detrended oscillation amplitude limit.
-    cfg.zeroCrossDeadbandPu = 0.001;
-    cfg.oscillationMinZeroCrossings = 4;
+    cfg.Ripple_Limit_PU = 0.010;          % Tail-window peak-to-peak limit.
+    cfg.STD_Limit_PU = 0.003;             % Tail-window standard deviation limit.
+    cfg.Slope_Limit_PU_Per_Sec = 0.05;      % Linear trend slope limit.
+    cfg.Oscillation_Amplitude_Limit_PU = 0.003;  % Detrended oscillation amplitude limit.
+    cfg.Zero_Cross_Deadband_PU = 0.001;
+    cfg.Oscillation_Min_Zero_Crossings = 4;
 
     % Smooth only for the convergence metrics, not for the simulation.
-    cfg.smoothingWindowSec = 0.002;
-    cfg.minTailPoints = 20;
+    cfg.Smoothing_Window_Sec = 0.002;
+    cfg.Min_Tail_Points = 20;
 
-    cfg.vBaseVariable = 'V_base';
-    cfg.fallbackVBase = 38.5e3;
-    cfg.verbose = true;
+    cfg.V_BaseVariable = 'V_base';
+    cfg.Fallback_V_Base = 38.5e3;
+    cfg.Verbose = true;
 end
 
 function result = localFindScrBoundary(cfg)
-    oldDir = pwd;
-    cleanupObj = onCleanup(@() cd(oldDir));
-    cd(cfg.workDir);
+    Old_Directory = pwd;
+    Cleanup_Obj = onCleanup(@() cd(Old_Directory));
+    cd(cfg.Work_Directory);
 
-    if ~isfile(cfg.parameterScript)
-        error('Parameter script not found: %s', cfg.parameterScript);
+    if ~isfile(cfg.Parameter_Script)
+        error('Parameter script not found: %s', cfg.Parameter_Script);
     end
 
-    if ~isfile(cfg.modelFile)
-        error('Model file not found: %s', cfg.modelFile);
+    if ~isfile(cfg.Model_File)
+        error('Model file not found: %s', cfg.Model_File);
     end
 
     localLoadBaseParameters(cfg);
-    projectRoot = fileparts(cfg.modelDir);
-    equipmentDir = fullfile(projectRoot, 'code', 'functions', 'equipment');
+    Project_Root = fileparts(cfg.Model_Directory);
+    Equipment_Directory = fullfile(Project_Root, 'code', 'functions', 'equipment');
     if isempty(which('configure_simulink_file_generation'))
-        addpath(equipmentDir);
+        addpath(Equipment_Directory);
     end
-    fileGenerationCleanup = configure_simulink_file_generation(projectRoot); %#ok<NASGU>
-    load_system(cfg.modelFile);
+    File_Generation_Cleanup = configure_simulink_file_generation(Project_Root); %#ok<NASGU>
+    load_system(cfg.Model_File);
 
-    try
-        set_param(cfg.modelName, 'ReturnWorkspaceOutputs', 'on');
-    catch
-        % Older releases may not expose this parameter.
+    set_param(cfg.Model_Name, 'ReturnWorkspaceOutputs', 'on');
+    set_param(cfg.Model_Name, 'StopTime', localNumToText(cfg.Stop_Time));
+
+    if isnan(cfg.Initial_SCR)
+        cfg.Initial_SCR = evalin('base', 'SCR');
     end
-    set_param(cfg.modelName, 'StopTime', localNumToText(cfg.stopTime));
+    cfg.V_Base = localReadBaseScalar(cfg.V_BaseVariable, cfg.Fallback_V_Base);
 
-    if isnan(cfg.initialSCR)
-        cfg.initialSCR = evalin('base', 'SCR');
-    end
-    cfg.vBase = localReadBaseScalar(cfg.vBaseVariable, cfg.fallbackVBase);
-
-    fprintf('Searching SCR boundary for %s.\n', cfg.modelName);
-    fprintf('  Tail window : %.3f to %.3f s\n', cfg.tailWindow(1), cfg.tailWindow(2));
-    fprintf('  SCR target gap < %.6f\n\n', cfg.scrTolerance);
+    fprintf('Searching SCR boundary for %s.\n', cfg.Model_Name);
+    fprintf('  Tail window : %.3f to %.3f s\n', cfg.Tail_Window(1), cfg.Tail_Window(2));
+    fprintf('  SCR target gap < %.6f\n\n', cfg.SCR_Tolerance);
 
     history = localEmptyHistory();
-    [trial, history] = localEvaluateAndStore(cfg.initialSCR, cfg, history);
+    [trial, history] = localEvaluateAndStore(cfg.Initial_SCR, cfg, history);
 
     if trial.converged
-        stableTrial = trial;
-        unstableTrial = [];
-        nextSCR = cfg.initialSCR / cfg.bracketScale;
+        Stable_Trial = trial;
+        Unstable_Trial = [];
+        Next_SCR = cfg.Initial_SCR / cfg.Bracket_Scale;
 
-        for step = 1:cfg.maxBracketSteps
-            if nextSCR < cfg.scrMin
+        for step = 1:cfg.Max_Bracket_Steps
+            if Next_SCR < cfg.SCR_Min
                 break;
             end
 
-            [trial, history] = localEvaluateAndStore(nextSCR, cfg, history);
+            [trial, history] = localEvaluateAndStore(Next_SCR, cfg, history);
             if trial.converged
-                stableTrial = trial;
-                nextSCR = nextSCR / cfg.bracketScale;
+                Stable_Trial = trial;
+                Next_SCR = Next_SCR / cfg.Bracket_Scale;
             else
-                unstableTrial = trial;
+                Unstable_Trial = trial;
                 break;
             end
         end
 
-        if isempty(unstableTrial)
+        if isempty(Unstable_Trial)
             error(['No non-converged SCR was found down to SCR = %.6g. ', ...
-                   'Lower cfg.scrMin or start from a smaller cfg.initialSCR.'], cfg.scrMin);
+                   'Lower cfg.SCR_Min or start from a smaller cfg.Initial_SCR.'], cfg.SCR_Min);
         end
     else
-        unstableTrial = trial;
-        stableTrial = [];
-        nextSCR = cfg.initialSCR * cfg.bracketScale;
+        Unstable_Trial = trial;
+        Stable_Trial = [];
+        Next_SCR = cfg.Initial_SCR * cfg.Bracket_Scale;
 
-        for step = 1:cfg.maxBracketSteps
-            if nextSCR > cfg.scrMax
+        for step = 1:cfg.Max_Bracket_Steps
+            if Next_SCR > cfg.SCR_Max
                 break;
             end
 
-            [trial, history] = localEvaluateAndStore(nextSCR, cfg, history);
+            [trial, history] = localEvaluateAndStore(Next_SCR, cfg, history);
             if trial.converged
-                stableTrial = trial;
+                Stable_Trial = trial;
                 break;
             else
-                unstableTrial = trial;
-                nextSCR = nextSCR * cfg.bracketScale;
+                Unstable_Trial = trial;
+                Next_SCR = Next_SCR * cfg.Bracket_Scale;
             end
         end
 
-        if isempty(stableTrial)
+        if isempty(Stable_Trial)
             error(['No converged SCR was found up to SCR = %.6g. ', ...
-                   'Raise cfg.scrMax or start from a larger cfg.initialSCR.'], cfg.scrMax);
+                   'Raise cfg.SCR_Max or start from a larger cfg.Initial_SCR.'], cfg.SCR_Max);
         end
     end
 
-    for iter = 1:cfg.maxBisectionIterations
-        if abs(stableTrial.SCR - unstableTrial.SCR) < cfg.scrTolerance
+    for iter = 1:cfg.Max_Bisection_Iterations
+        if abs(Stable_Trial.SCR - Unstable_Trial.SCR) < cfg.SCR_Tolerance
             break;
         end
 
-        midSCR = 0.5 * (stableTrial.SCR + unstableTrial.SCR);
-        [trial, history] = localEvaluateAndStore(midSCR, cfg, history);
+        Mid_SCR = 0.5 * (Stable_Trial.SCR + Unstable_Trial.SCR);
+        [trial, history] = localEvaluateAndStore(Mid_SCR, cfg, history);
 
         if trial.converged
-            stableTrial = trial;
+            Stable_Trial = trial;
         else
-            unstableTrial = trial;
+            Unstable_Trial = trial;
         end
     end
 
     result = struct();
-    result.convergedSCR = stableTrial.SCR;
-    result.nonConvergedSCR = unstableTrial.SCR;
-    result.scrGap = abs(stableTrial.SCR - unstableTrial.SCR);
-    result.criticalSCRMidpoint = 0.5 * (stableTrial.SCR + unstableTrial.SCR);
-    result.toleranceTarget = cfg.scrTolerance;
-    result.tailWindow = cfg.tailWindow;
-    result.convergedMetrics = stableTrial.metrics;
-    result.nonConvergedMetrics = unstableTrial.metrics;
+    result.convergedSCR = Stable_Trial.SCR;
+    result.nonConvergedSCR = Unstable_Trial.SCR;
+    result.scrGap = abs(Stable_Trial.SCR - Unstable_Trial.SCR);
+    result.criticalSCRMidpoint = 0.5 * (Stable_Trial.SCR + Unstable_Trial.SCR);
+    result.toleranceTarget = cfg.SCR_Tolerance;
+    result.tailWindow = cfg.Tail_Window;
+    result.convergedMetrics = Stable_Trial.metrics;
+    result.nonConvergedMetrics = Unstable_Trial.metrics;
     result.history = struct2table(history);
     result.config = cfg;
 end
 
-function [trial, history] = localEvaluateAndStore(scrValue, cfg, history)
-    trial = localEvaluateSCR(scrValue, cfg);
+function [trial, history] = localEvaluateAndStore(SCR_Value, cfg, history)
+    trial = localEvaluateSCR(SCR_Value, cfg);
     history(end + 1) = localHistoryRow(trial);
 
-    if cfg.verbose
+    if cfg.Verbose
         fprintf(['SCR=%9.5f -> %-13s  ripple=%8.4g pu  std=%8.4g pu  ', ...
                  'slope=%8.4g pu/s  oscAmp=%8.4g pu  zc=%2d  time=%6.2f s\n'], ...
             trial.SCR, char(trial.status), trial.metrics.ripplePu, ...
@@ -202,34 +198,34 @@ function [trial, history] = localEvaluateAndStore(scrValue, cfg, history)
     end
 end
 
-function trial = localEvaluateSCR(scrValue, cfg)
-    tStart = tic;
+function trial = localEvaluateSCR(SCR_Value, cfg)
+    t_Start = tic;
     metrics = localBlankMetrics();
 
     trial = struct();
-    trial.SCR = scrValue;
+    trial.SCR = SCR_Value;
     trial.converged = false;
     trial.status = "not_converged";
     trial.metrics = metrics;
     trial.elapsedSec = NaN;
 
     try
-        gridVars = localApplySCRToBase(scrValue);
+        Grid_Vars = localApplySCRToBase(SCR_Value);
 
-        simInput = Simulink.SimulationInput(cfg.modelName);
-        simInput = simInput.setModelParameter( ...
-            'StopTime', localNumToText(cfg.stopTime), ...
+        Simulation_Input = Simulink.SimulationInput(cfg.Model_Name);
+        Simulation_Input = Simulation_Input.setModelParameter( ...
+            'Stop_Time', localNumToText(cfg.Stop_Time), ...
             'ReturnWorkspaceOutputs', 'on');
 
-        simInput = simInput.setVariable('SCR', scrValue);
-        simInput = simInput.setVariable('Zg', gridVars.Zg);
-        simInput = simInput.setVariable('Lg', gridVars.Lg);
-        if isfield(gridVars, 'Lij')
-            simInput = simInput.setVariable('Lij', gridVars.Lij);
+        Simulation_Input = Simulation_Input.setVariable('SCR', SCR_Value);
+        Simulation_Input = Simulation_Input.setVariable('Zg', Grid_Vars.Zg);
+        Simulation_Input = Simulation_Input.setVariable('Lg', Grid_Vars.Lg);
+        if isfield(Grid_Vars, 'Lij')
+            Simulation_Input = Simulation_Input.setVariable('Lij', Grid_Vars.Lij);
         end
 
-        simOut = sim(simInput);
-        [t, y] = localExtractSignal(simOut, cfg.signalName);
+        Simulation_Out = sim(Simulation_Input);
+        [t, y] = localExtractSignal(Simulation_Out, cfg.Signal_Name);
         [trial.converged, metrics] = localJudgeConvergence(t, y, cfg);
 
         if trial.converged
@@ -244,84 +240,81 @@ function trial = localEvaluateSCR(scrValue, cfg)
     end
 
     trial.metrics = metrics;
-    trial.elapsedSec = toc(tStart);
+    trial.elapsedSec = toc(t_Start);
 end
 
 function localLoadBaseParameters(cfg)
-    escapedPath = strrep(cfg.parameterScript, '''', '''''');
+    Escaped_Path = strrep(cfg.Parameter_Script, '''', '''''');
     try
-        evalc(sprintf('evalin(''base'', ''run(''''%s'''');'');', escapedPath));
+        evalc(sprintf('evalin(''base'', ''run(''''%s'''');'');', Escaped_Path));
     catch ME
-        error('Failed to run parameter script %s\n%s', cfg.parameterScript, ME.message);
+        error('Failed to run parameter script %s\n%s', cfg.Parameter_Script, ME.message);
     end
 end
 
-function gridVars = localApplySCRToBase(scrValue)
+function Grid_Vars = localApplySCRToBase(SCR_Value)
     Vg = evalin('base', 'Vg');
     S_base = evalin('base', 'S_base');
     f = evalin('base', 'f');
 
-    Zg = Vg^2 / (S_base * scrValue);
+    Zg = Vg^2 / (S_base * SCR_Value);
     Lg = Zg / (2 * pi * f);
 
-    assignin('base', 'SCR', scrValue);
+    assignin('base', 'SCR', SCR_Value);
     assignin('base', 'Zg', Zg);
     assignin('base', 'Lg', Lg);
 
-    gridVars = struct('Zg', Zg, 'Lg', Lg);
+    Grid_Vars = struct('Zg', Zg, 'Lg', Lg);
 
     if evalin('base', 'exist(''MISCR'', ''var'')') == 1
         MISCR = evalin('base', 'MISCR');
-        Lij = (scrValue / MISCR - 1) * Lg;
+        Lij = (SCR_Value / MISCR - 1) * Lg;
         assignin('base', 'Lij', Lij);
-        gridVars.Lij = Lij;
+        Grid_Vars.Lij = Lij;
     end
 end
 
-function value = localReadBaseScalar(variableName, fallbackValue)
-    if evalin('base', sprintf('exist(''%s'', ''var'')', variableName)) == 1
-        value = evalin('base', variableName);
+function value = localReadBaseScalar(Variable_Name, Fallback_Value)
+    if evalin('base', sprintf('exist(''%s'', ''var'')', Variable_Name)) == 1
+        value = evalin('base', Variable_Name);
         if ~isscalar(value) || ~isnumeric(value) || ~isfinite(value)
-            value = fallbackValue;
+            value = Fallback_Value;
         end
     else
-        value = fallbackValue;
+        value = Fallback_Value;
     end
 end
 
-function [t, y] = localExtractSignal(simOut, signalName)
+function [t, y] = localExtractSignal(Simulation_Out, Signal_Name)
     try
-        rawSignal = simOut.get(signalName);
+        Raw_Signal = Simulation_Out.get(Signal_Name);
     catch
         try
-            rawSignal = simOut.(signalName);
+            Raw_Signal = Simulation_Out.(Signal_Name);
         catch ME
-            availableNames = "";
+            Available_Names = "";
             try
-                availableNames = strjoin(string(simOut.who), ", ");
+                Available_Names = strjoin(string(Simulation_Out.who), ", ");
             catch
             end
             error('Cannot read simOut.%s. Available outputs: %s\n%s', ...
-                signalName, availableNames, ME.message);
+                Signal_Name, Available_Names, ME.message);
         end
     end
 
-    [t, y] = localSignalToXY(rawSignal);
+    [t, y] = localSignalToXY(Raw_Signal);
 end
 
-function [t, y] = localSignalToXY(rawSignal)
-    if isa(rawSignal, 'timeseries')
-        t = rawSignal.Time;
-        y = rawSignal.Data;
-    elseif isa(rawSignal, 'Simulink.SimulationData.Signal')
-        values = rawSignal.Values;
+function [t, y] = localSignalToXY(Raw_Signal)
+    if isa(Raw_Signal, 'timeseries')
+        t = Raw_Signal.Time;
+        y = Raw_Signal.Data;
+    elseif isa(Raw_Signal, 'Simulink.SimulationData.Signal')
+        values = Raw_Signal.Values;
         [t, y] = localSignalToXY(values);
         return;
-    elseif isstruct(rawSignal) && isfield(rawSignal, 'time') && isfield(rawSignal, 'signals')
-        t = rawSignal.time;
-        y = rawSignal.signals.values;
     else
-        error('Unsupported signal type: %s', class(rawSignal));
+        error('Unsupported signal type: %s', class(Raw_Signal));
     end
 
     t = double(t(:));
@@ -355,50 +348,50 @@ function [converged, metrics] = localJudgeConvergence(t, y, cfg)
     [t, order] = sort(t);
     y = y(order);
 
-    idx = (t >= cfg.tailWindow(1)) & (t <= cfg.tailWindow(2));
+    idx = (t >= cfg.Tail_Window(1)) & (t <= cfg.Tail_Window(2));
     metrics.tailPointCount = nnz(idx);
-    if metrics.tailPointCount < cfg.minTailPoints
+    if metrics.tailPointCount < cfg.Min_Tail_Points
         metrics.message = "Too few points in the tail window.";
         converged = false;
         return;
     end
 
-    tTail = t(idx);
-    yTailPu = y(idx) ./ cfg.vBase;
+    t_Tail = t(idx);
+    Y_Tail_PU = y(idx) ./ cfg.V_Base;
 
-    dt = median(diff(unique(tTail)));
+    dt = median(diff(unique(t_Tail)));
     if ~isfinite(dt) || dt <= 0
         metrics.message = "Tail-window time vector is not usable.";
         converged = false;
         return;
     end
 
-    smoothPoints = max(1, round(cfg.smoothingWindowSec / dt));
-    if smoothPoints > 1
-        yTrendPu = movmean(yTailPu, smoothPoints, 'Endpoints', 'shrink');
+    Smooth_Points = max(1, round(cfg.Smoothing_Window_Sec / dt));
+    if Smooth_Points > 1
+        Y_Trend_PU = movmean(Y_Tail_PU, Smooth_Points, 'Endpoints', 'shrink');
     else
-        yTrendPu = yTailPu;
+        Y_Trend_PU = Y_Tail_PU;
     end
 
-    tFit = tTail - tTail(1);
-    fitCoeff = polyfit(tFit, yTrendPu, 1);
-    fittedPu = polyval(fitCoeff, tFit);
-    residualPu = yTrendPu - fittedPu;
+    t_Fit = t_Tail - t_Tail(1);
+    Fit_Coeff = polyfit(t_Fit, Y_Trend_PU, 1);
+    Fitted_PU = polyval(Fit_Coeff, t_Fit);
+    Residual_PU = Y_Trend_PU - Fitted_PU;
 
-    metrics.meanPu = mean(yTrendPu);
-    metrics.ripplePu = max(yTrendPu) - min(yTrendPu);
-    metrics.stdPu = std(yTrendPu);
-    metrics.slopePuPerSec = abs(fitCoeff(1));
-    metrics.oscillationAmpPu = 0.5 * (max(residualPu) - min(residualPu));
+    metrics.meanPu = mean(Y_Trend_PU);
+    metrics.ripplePu = max(Y_Trend_PU) - min(Y_Trend_PU);
+    metrics.stdPu = std(Y_Trend_PU);
+    metrics.slopePuPerSec = abs(Fit_Coeff(1));
+    metrics.oscillationAmpPu = 0.5 * (max(Residual_PU) - min(Residual_PU));
     metrics.oscillationZeroCrossings = localSignificantZeroCrossings( ...
-        residualPu, cfg.zeroCrossDeadbandPu);
+        Residual_PU, cfg.Zero_Cross_Deadband_PU);
 
-    metrics.smallRipple = metrics.ripplePu <= cfg.rippleLimitPu;
-    metrics.lowStd = metrics.stdPu <= cfg.stdLimitPu;
-    metrics.lowSlope = metrics.slopePuPerSec <= cfg.slopeLimitPuPerSec;
+    metrics.smallRipple = metrics.ripplePu <= cfg.Ripple_Limit_PU;
+    metrics.lowStd = metrics.stdPu <= cfg.STD_Limit_PU;
+    metrics.lowSlope = metrics.slopePuPerSec <= cfg.Slope_Limit_PU_Per_Sec;
     metrics.noSustainedOscillation = ...
-        (metrics.oscillationAmpPu <= cfg.oscillationAmpLimitPu) || ...
-        (metrics.oscillationZeroCrossings < cfg.oscillationMinZeroCrossings);
+        (metrics.oscillationAmpPu <= cfg.Oscillation_Amplitude_Limit_PU) || ...
+        (metrics.oscillationZeroCrossings < cfg.Oscillation_Min_Zero_Crossings);
 
     converged = metrics.smallRipple && metrics.lowStd && ...
         metrics.lowSlope && metrics.noSustainedOscillation;

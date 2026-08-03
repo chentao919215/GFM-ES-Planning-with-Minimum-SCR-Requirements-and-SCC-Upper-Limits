@@ -11,7 +11,7 @@ function results = plot_fig_05_02()
 %   |I_eq| = hypot(Id_eq,Iq_eq) <= I_limit。
 %
 % 当前项目中未找到原始报告或表5-3文件，因此本脚本执行当前
-% Invert_Parameters.m，并将参数快照与结果一起保存。当前参数计算得到的
+% GFL_Parameters.m，并将参数快照与结果一起保存。当前参数计算得到的
 % 理论限流起始点约为0.304 p.u.。
 
 %% 路径与参数加载
@@ -27,7 +27,7 @@ end
 file_generation_cleanup = configure_simulink_file_generation(project_root); %#ok<NASGU>
 
 param_file = fullfile(code_dir, 'scripts', 'equipment', ...
-    'Invert_Parameters.m');
+    'GFL_Parameters.m');
 model_file = fullfile(project_root, 'simulink', 'models', ...
     'Grid_Following_Inverters_LVRT.slx');
 output_dir = fullfile(project_root, 'figs', 'for_report');
@@ -38,7 +38,7 @@ if ~isfolder(output_dir)
     mkdir(output_dir);
 end
 
-% Invert_Parameters.m是工作区初始化脚本。由于Simulink模块参数从基础
+% GFL_Parameters.m是工作区初始化脚本。由于Simulink模块参数从基础
 % 工作区解析，因此需要在基础工作区中执行。
 evalin('base', sprintf('run(''%s'');', ...
     strrep(param_file, '''', '''''')));

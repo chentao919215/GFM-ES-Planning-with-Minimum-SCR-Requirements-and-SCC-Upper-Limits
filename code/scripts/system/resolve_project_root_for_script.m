@@ -1,22 +1,22 @@
-function project_root = resolve_project_root_for_script()
+function Project_Root = resolve_project_root_for_script()
 %% 本函数功能是为不同MATLAB运行方式定位项目根目录。
 
-script_file = mfilename('fullpath');
-script_dir = fileparts(script_file);
-utils_dir = fullfile(script_dir, '..', 'functions', 'utils');
-if isfolder(utils_dir)
-    addpath(utils_dir);
+Script_File = mfilename('fullpath');
+Script_Directory = fileparts(Script_File);
+Utils_Directory = fullfile(Script_Directory, '..', 'functions', 'utils');
+if isfolder(Utils_Directory)
+    addpath(Utils_Directory);
 end
 
 try
-    project_root = find_project_root(script_dir);
+    Project_Root = find_project_root(Script_Directory);
 catch ME
-    explicit_root = getenv('PROJECT_2_ROOT');
-    if isempty(explicit_root)
+    Explicit_Root = getenv('PROJECT_2_ROOT');
+    if isempty(Explicit_Root)
         rethrow(ME);
     end
-    project_root = find_project_root(explicit_root);
+    Project_Root = find_project_root(Explicit_Root);
 end
 
-project_root = char(java.io.File(project_root).getCanonicalPath());
+Project_Root = char(java.io.File(Project_Root).getCanonicalPath());
 end

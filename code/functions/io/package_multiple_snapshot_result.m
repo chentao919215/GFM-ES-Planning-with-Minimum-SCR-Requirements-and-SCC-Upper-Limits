@@ -1,6 +1,6 @@
 function Result = package_multiple_snapshot_result(SCC_0,SCC_1,P_Line,theta,P_G,P_GFL,P_GFM,...
     SCR,Z_SCC,Z_SCR,u_GFL,u_G,u_G_SCC,u_G_SCR,Cost_CON,Cost_GEN,Cost_Total,...
-    solve_time,CONF,Diagnostics,u_GFM_Mod,P_GFM_Dis,P_GFM_Ch,E_GFM,u_GFM_Ch,...
+    Solve_Time,CONF,Diagnostics,u_GFM_Module,P_GFM_Dis,P_GFM_Ch,E_GFM,u_GFM_Ch,...
     P_GFL_Curt,Cost_Curt,u_G_Start,u_G_Stop,Cost_UC)
 %% 本函数功能是将多时段求解输出整理为统一结果结构体。
 
@@ -34,15 +34,11 @@ Result.u_G_Start   = u_G_Start;
 Result.u_G_Stop    = u_G_Stop;
 Result.u_G_SCC     = u_G_SCC;
 Result.u_G_SCR     = u_G_SCR;
-Result.u_GFM_Mod   = u_GFM_Mod;
-if isfield(Diagnostics,'ConfigurationSelection')
-    Result.lambda_c = Diagnostics.ConfigurationSelection;
-    Result.GFM_Config_Module_Status = Diagnostics.ConfigurationModuleStatus;
-    Result.GFM_Config_Allowed = Diagnostics.ConfigurationAllowed;
-    if isfield(Diagnostics,'ConfigurationCandidateStatus')
-        Result.GFM_Config_Candidate_Status = Diagnostics.ConfigurationCandidateStatus;
-    end
-end
+Result.u_GFM_Mod   = u_GFM_Module;
+Result.lambda_c = Diagnostics.ConfigurationSelection;
+Result.GFM_Config_Module_Status = Diagnostics.ConfigurationModuleStatus;
+Result.GFM_Config_Allowed = Diagnostics.ConfigurationAllowed;
+Result.GFM_Config_Candidate_Status = Diagnostics.ConfigurationCandidateStatus;
 % 场景相关储能运行结果按[候选节点,典型日,场景,时段]保存，
 % P_GFM为[节点,典型日,场景,时段]全节点净注入功率。
 Result.P_GFM_Dis   = P_GFM_Dis;
@@ -50,21 +46,21 @@ Result.P_GFM_Ch    = P_GFM_Ch;
 Result.E_GFM       = E_GFM;
 Result.u_GFM_Ch    = u_GFM_Ch;
 Result.Cost        = Cost;
-Result.solve_time  = solve_time;
+Result.solve_time  = Solve_Time;
 Result.CONF        = CONF;
 Result.Diagnostics = Diagnostics;
 
 % 保存场景轴含义和概率，避免下游输出将场景维误认为时段维。
-WindScenarios = struct();
-WindScenarios.Count = CONF.WindScenarioCount;
-WindScenarios.Names = CONF.WindScenarioNames;
-WindScenarios.Probabilities = CONF.WindScenarioProbabilities;
-WindScenarios.ScaleFactors = CONF.WindScenarioScaleFactors;
-WindScenarios.GenerationMode = CONF.WindScenarioGenerationMode;
-WindScenarios.BaseScenarioIndex = CONF.WindScenarioBaseIndex;
-WindScenarios.AvailablePowerDimensions = ...
+Wind_Scenarios = struct();
+Wind_Scenarios.Count = CONF.WindScenarioCount;
+Wind_Scenarios.Names = CONF.WindScenarioNames;
+Wind_Scenarios.Probabilities = CONF.WindScenarioProbabilities;
+Wind_Scenarios.ScaleFactors = CONF.WindScenarioScaleFactors;
+Wind_Scenarios.GenerationMode = CONF.WindScenarioGenerationMode;
+Wind_Scenarios.BaseScenarioIndex = CONF.WindScenarioBaseIndex;
+Wind_Scenarios.AvailablePowerDimensions = ...
     {'node','typical_day','wind_scenario','period'};
-Result.WindScenarios = WindScenarios;
+Result.WindScenarios = Wind_Scenarios;
 
 Dimensions = struct();
 Dimensions.SharedUC = {'generator','typical_day','period'};
@@ -78,23 +74,23 @@ Dimensions.SafetyState = {'generator','typical_day'};
 Result.Dimensions = Dimensions;
 
 % 显式保存原节点与降阶节点映射，便于解释两类阻抗结果的行、列索引。
-SafetyNetwork = struct();
-SafetyNetwork.RetainedOriginalNodes = CONF.Safety_Retained_Nodes(:);
-SafetyNetwork.OriginalToReduced = CONF.Safety_Original_To_Reduced(:);
-SafetyNetwork.SCCColumnOriginalNodes = CONF.Safety_Retained_Nodes(:);
-SafetyNetwork.SCCConstraintOriginalNodes = ...
+Safety_Network = struct();
+Safety_Network.RetainedOriginalNodes = CONF.Safety_Retained_Nodes(:);
+Safety_Network.OriginalToReduced = CONF.Safety_Original_To_Reduced(:);
+Safety_Network.SCCColumnOriginalNodes = CONF.Safety_Retained_Nodes(:);
+Safety_Network.SCCConstraintOriginalNodes = ...
     CONF.SCC_Constraint_Original_Nodes(:);
-SafetyNetwork.SCRColumnOriginalNodes = CONF.Safety_GFL_Original_Nodes(:);
-SafetyNetwork.SCRColumnReducedIndices = ...
+Safety_Network.SCRColumnOriginalNodes = CONF.Safety_GFL_Original_Nodes(:);
+Safety_Network.SCRColumnReducedIndices = ...
     CONF.Safety_GFL_Reduced_Indices(:);
-SafetyNetwork.TypicalDayCount = CONF.TypicalDayCount;
-SafetyNetwork.AggregationScope = 'within_each_typical_day';
-SafetyNetwork.SCCStateDimensions = {'generator','typical_day'};
-SafetyNetwork.SCRStateDimensions = {'generator','typical_day'};
-SafetyNetwork.SCCImpedanceDimensions = ...
+Safety_Network.TypicalDayCount = CONF.TypicalDayCount;
+Safety_Network.AggregationScope = 'within_each_typical_day';
+Safety_Network.SCCStateDimensions = {'generator','typical_day'};
+Safety_Network.SCRStateDimensions = {'generator','typical_day'};
+Safety_Network.SCCImpedanceDimensions = ...
     {'retained_node','retained_node','typical_day'};
-SafetyNetwork.SCRImpedanceDimensions = ...
+Safety_Network.SCRImpedanceDimensions = ...
     {'retained_node','gfl_column','typical_day'};
-Result.SafetyNetwork = SafetyNetwork;
+Result.SafetyNetwork = Safety_Network;
 
 end
