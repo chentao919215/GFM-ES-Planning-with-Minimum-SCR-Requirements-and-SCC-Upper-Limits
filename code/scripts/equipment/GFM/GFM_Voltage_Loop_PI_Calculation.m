@@ -1,5 +1,5 @@
-%% 构网型变流器 vC 电压外环 PI 参数整定
-% 本脚本在逆变器侧 i1 电流内环闭环后，整定 vC_d/vC_q 电压外环。
+%% 构网型变流器 vMid 电压外环 PI 参数整定
+% 本脚本在逆变器侧 i1 电流内环闭环后，整定 vMid_d/vMid_q 电压外环。
 %
 % 建模口径：
 % 1. 标称电压环对象不包含网侧阻抗，将 i2 视为外部扰动。
@@ -20,7 +20,7 @@ R_L2 = 0.05;       % 网侧电阻，用于完整 LCL 稳定性校核 [ohm]
 fg = 50;           % 额定电网频率 [Hz]
 w0 = 2*pi*fg;      % 同步 dq 坐标系角频率 [rad/s]
 
-target_current_bandwidth_hz = 100;
+target_current_bandwidth_hz = 200;
 voltage_to_current_bw_ratio = 4;
 target_voltage_bandwidth_hz = ...
     target_current_bandwidth_hz / voltage_to_current_bw_ratio;
@@ -32,7 +32,7 @@ wv = 2*pi*target_voltage_bandwidth_hz;
 current_pi_source = 'recalculate';
 current_Kp_manual = 5;
 current_Ki_manual = 5000;
-current_voltage_feedforward_mode = 'capacitor_voltage';
+current_voltage_feedforward_mode = 'midpoint_voltage';
 use_current_dq_decoupling_in_tuning = false;
 use_current_manual_kp_constraint = true;
 current_Kp_constraint = 5;
@@ -51,8 +51,10 @@ target_phase_margin_deg = 60;
 % 电流环会在完整 L1-C-L2 动态中把 L2 模态反馈至 i1_ref，因此还需
 % 使用十阶完整 LCL 闭环模型校核。下列参数为通过该校核的稳健建议值。
 use_full_lcl_robust_recommendation = true;
-full_lcl_voltage_Kp = 0.01;      % [A/V]
-full_lcl_voltage_Ki = 0.0032;    % [A/(V*s)]
+% 当前电压环参数为完整LCL闭环极点校核后的保守参数；
+% 目标是兼顾vMid恢复速度与LCL动态稳定性。
+full_lcl_voltage_Kp = 0.013;       % [A/V]
+full_lcl_voltage_Ki = 0.01;      % [A/(V*s)]
 
 show_rga_plots        = false;
 show_validation_plots = false;
@@ -63,7 +65,7 @@ assert(R_L1 >= 0 && R_C >= 0 && L2 > 0 && R_L2 >= 0, ...
 assert(target_current_bandwidth_hz > 0 && voltage_to_current_bw_ratio > 0, ...
     'Bandwidth settings must be positive.');
 
-fprintf('GFM capacitor-voltage outer-loop tuning\n');
+fprintf('GFM midpoint-voltage outer-loop tuning\n');
 fprintf('  Target current bandwidth = %.12g Hz\n', ...
     target_current_bandwidth_hz);
 fprintf('  Target voltage bandwidth = %.12g Hz\n', ...
@@ -170,27 +172,30 @@ D_cap = zeros(2);
 G_cap_raw = ss(A_cap_raw, B_cap, C_cap, D_cap);
 G_cap_raw.InputName  = {'delta_i1_d', 'delta_i1_q'};
 G_cap_raw.OutputName = {'vC_d', 'vC_q'};
+G_RC = ss([], [], [], R_C*eye(2));
 
 if use_voltage_dq_decoupling_in_tuning
     A_cap_tune = zeros(2);
     voltage_plant_description = ...
-        'Ideal dq-decoupled capacitor plant, 1/(Cf*s).';
+        'dq-decoupled midpoint-voltage plant, 1/(Cf*s)+R_C.';
 else
     A_cap_tune = A_cap_raw;
     voltage_plant_description = ...
-        'Capacitor plant with dq cross-coupling retained.';
+        'Midpoint-voltage plant with dq cross-coupling retained.';
 end
 
 G_cap_tune = ss(A_cap_tune, B_cap, C_cap, D_cap);
 G_cap_tune.InputName  = {'delta_i1_d', 'delta_i1_q'};
 G_cap_tune.OutputName = {'vC_d', 'vC_q'};
 
-G_v = minreal(G_cap_tune*T_i1);
-G_v.InputName  = {'i1_d_ref_corr', 'i1_q_ref_corr'};
-G_v.OutputName = {'vC_d', 'vC_q'};
-G_v_raw = minreal(G_cap_raw*T_i1);
+% vMid = vC + R_C*(i1-i2)。标称参考通道将 i2 作为扰动，
+% 因此从 i1_ref_corr 到 vMid 的通道包含 R_C*i1 的直接项。
+G_mid = minreal((G_cap_tune+G_RC)*T_i1);
+G_mid.InputName  = {'i1_d_ref_corr', 'i1_q_ref_corr'};
+G_mid.OutputName = {'vMid_d', 'vMid_q'};
+G_mid_raw = minreal((G_cap_raw+G_RC)*T_i1);
 
-fprintf('\nVoltage plant: %s\n', voltage_plant_description);
+fprintf('\nMidpoint-voltage plant: %s\n', voltage_plant_description);
 fprintf('Nominal voltage-loop tuning excludes L2 and R_L2.\n');
 
 %% 4. 计算 RGA 并判断 d/q 轴配对
@@ -199,19 +204,19 @@ w          = 2*pi*freq_hz;
 rga_values = NaN(2, 2, numel(w));
 
 for k = 1:numel(w)
-    Gjw = squeeze(freqresp(G_v, w(k)));
+    Gjw = squeeze(freqresp(G_mid, w(k)));
     if all(size(Gjw) == [2, 2]) && rcond(Gjw) >= 1e-12
         rga_values(:, :, k) = Gjw .* transpose(Gjw \ eye(2));
     end
 end
 
-G_wv = squeeze(freqresp(G_v, wv));
+G_wv = squeeze(freqresp(G_mid, wv));
 if ~all(size(G_wv) == [2, 2]) || rcond(G_wv) < 1e-12
     error('The voltage plant is singular at the target bandwidth.');
 end
 rga_wv = G_wv .* transpose(G_wv \ eye(2));
 
-G_raw_wv = squeeze(freqresp(G_v_raw, wv));
+G_raw_wv = squeeze(freqresp(G_mid_raw, wv));
 if all(size(G_raw_wv) == [2, 2]) && rcond(G_raw_wv) >= 1e-12
     rga_raw_wv = G_raw_wv .* transpose(G_raw_wv \ eye(2));
 else
@@ -225,10 +230,10 @@ cross_pairing_score = abs(rga_wv(1,2)-1) + abs(rga_wv(2,1)-1) ...
 
 if diag_pairing_score <= cross_pairing_score
     selected_pairing = ...
-        'Diagonal: i1_d_ref_corr -> vC_d, i1_q_ref_corr -> vC_q';
+        'Diagonal: i1_d_ref_corr -> vMid_d, i1_q_ref_corr -> vMid_q';
 else
     selected_pairing = ...
-        'Cross: i1_d_ref_corr -> vC_q, i1_q_ref_corr -> vC_d';
+        'Cross: i1_d_ref_corr -> vMid_q, i1_q_ref_corr -> vMid_d';
 end
 
 fprintf('\nRGA at the target voltage bandwidth:\n');
@@ -251,17 +256,17 @@ if show_rga_plots
     ylabel('RGA magnitude');
     legend('|lambda_{dd}|', '|lambda_{dq}|', '|lambda_{qd}|', ...
         '|lambda_{qq}|', 'Location', 'best');
-    title('GFM capacitor-voltage-loop RGA');
+    title('GFM midpoint-voltage-loop RGA');
 end
 
 %% 5. 整定电压外环 PI 控制器
 tune_options = pidtuneOptions('PhaseMargin', target_phase_margin_deg);
 [Cpi_v_pidtune, info_v_pidtune] = ...
-    pidtune(G_v(1,1), 'PI', wv, tune_options);
+    pidtune(G_mid(1,1), 'PI', wv, tune_options);
 
 Kp_v_pidtune = Cpi_v_pidtune.Kp;
 Ki_v_pidtune = Cpi_v_pidtune.Ki;
-[plant_mag_wv, plant_phase_wv] = bode(G_v(1,1), wv);
+[plant_mag_wv, plant_phase_wv] = bode(G_mid(1,1), wv);
 plant_mag_wv   = squeeze(plant_mag_wv);
 plant_phase_wv = squeeze(plant_phase_wv);
 if ~isfinite(plant_mag_wv) || plant_mag_wv <= 0
@@ -292,7 +297,8 @@ nominal_full_lcl_A = buildFullLclClosedLoop( ...
     current_Kp_used, current_Ki_used, ...
     Kp_v_used, Ki_v_used, use_i2_feedforward, ...
     use_voltage_dq_decoupling_in_tuning, ...
-    use_current_dq_decoupling_in_tuning);
+    use_current_dq_decoupling_in_tuning, ...
+    strcmp(current_voltage_feedforward_mode, 'midpoint_voltage'));
 nominal_full_lcl_poles = eig(nominal_full_lcl_A);
 nominal_full_lcl_max_pole_real = max(real(nominal_full_lcl_poles));
 is_nominal_full_lcl_stable = nominal_full_lcl_max_pole_real < 0;
@@ -310,7 +316,8 @@ full_lcl_A = buildFullLclClosedLoop( ...
     current_Kp_used, current_Ki_used, ...
     Kp_v_used, Ki_v_used, use_i2_feedforward, ...
     use_voltage_dq_decoupling_in_tuning, ...
-    use_current_dq_decoupling_in_tuning);
+    use_current_dq_decoupling_in_tuning, ...
+    strcmp(current_voltage_feedforward_mode, 'midpoint_voltage'));
 full_lcl_poles = eig(full_lcl_A);
 full_lcl_max_pole_real = max(real(full_lcl_poles));
 is_full_lcl_stable = full_lcl_max_pole_real < 0;
@@ -318,22 +325,22 @@ assert(is_full_lcl_stable, ...
     'The final voltage PI does not stabilize the complete LCL model.');
 
 K_v = append(Cpi_v, Cpi_v);
-K_v.InputName  = {'e_vC_d', 'e_vC_q'};
+K_v.InputName  = {'e_vMid_d', 'e_vMid_q'};
 K_v.OutputName = {'i1_d_ref_corr', 'i1_q_ref_corr'};
-L_open_v = G_v*K_v;
-T_closed_v = feedback(L_open_v, eye(2));
-T_closed_v.InputName  = {'vC_d_ref', 'vC_q_ref'};
-T_closed_v.OutputName = {'vC_d', 'vC_q'};
+L_open_v = G_mid*K_v;
+T_closed_mid = feedback(L_open_v, eye(2));
+T_closed_mid.InputName  = {'vMid_d_ref', 'vMid_q_ref'};
+T_closed_mid.OutputName = {'vMid_d', 'vMid_q'};
 
-% 电压 PI 由标称 SISO 通道 G_v(1,1) 整定，但闭环校核采用完整 2×2
-% 模型。当 T_i1 保留 dq 耦合时，直接对 G_v(1,1) 调用 margin 可能
+% 电压 PI 由标称 SISO 通道 G_mid(1,1) 整定，但闭环校核采用完整 2×2
+% 模型。当 T_i1 保留 dq 耦合时，直接对 G_mid(1,1) 调用 margin 可能
 % 报告具有误导性的临界极点。因此默认参数采用 pidtune 给出的 SISO
 % 交越频率与相位裕度，并使用 MIMO 闭环极点判断稳定性。
 if use_voltage_manual_kp_constraint || ...
         use_full_lcl_robust_recommendation
     warning_state = warning;
     warning('off', 'all');
-    [Gm_v, Pm_v, Wcg_v, Wcp_v] = margin(Cpi_v*G_v(1,1));
+    [Gm_v, Pm_v, Wcg_v, Wcp_v] = margin(Cpi_v*G_mid(1,1));
     warning(warning_state);
 else
     Gm_v = NaN;
@@ -349,7 +356,7 @@ fprintf('  Ki_v = %.12g A/(V*s)\n', Ki_v_pidtune);
 fprintf('  Crossover frequency = %.12g rad/s\n', ...
     info_v_pidtune.CrossoverFrequency);
 fprintf('  Phase margin        = %.12g deg\n', info_v_pidtune.PhaseMargin);
-fprintf('  |G_v(jwv)|          = %.12g V/A\n', plant_mag_wv);
+fprintf('  |G_mid(jwv)|        = %.12g V/A\n', plant_mag_wv);
 fprintf('  Plant phase at wv   = %.12g deg\n', plant_phase_wv);
 fprintf('  Complete-LCL maximum pole real part = %.12g\n', ...
     nominal_full_lcl_max_pole_real);
@@ -388,11 +395,11 @@ if isfinite(Wcg_v)
     fprintf('  Gain margin frequency = %.12g rad/s\n', Wcg_v);
 end
 
-T_wv = squeeze(freqresp(T_closed_v, wv));
+T_wv = squeeze(freqresp(T_closed_mid, wv));
 closed_loop_coupling_ratio = max(abs([T_wv(1,2), T_wv(2,1)])) ...
                            / max(abs([T_wv(1,1), T_wv(2,2)]));
-closed_loop_poles = pole(T_closed_v);
-is_voltage_loop_stable = isstable(T_closed_v);
+closed_loop_poles = pole(T_closed_mid);
+is_voltage_loop_stable = isstable(T_closed_mid);
 
 fprintf('\nClosed-loop validation at the target bandwidth:\n');
 fprintf('  Off-diagonal/diagonal ratio = %.12g\n', ...
@@ -410,20 +417,20 @@ end
 
 if show_validation_plots
     figure;
-    bode(Cpi_v*G_v(1,1));
+    bode(Cpi_v*G_mid(1,1));
     grid on;
-    title('GFM voltage-loop nominal SISO open-loop response');
+    title('GFM midpoint-voltage-loop nominal SISO open-loop response');
 
     figure;
-    bodemag(T_closed_v(1,1), T_closed_v(1,2), ...
-        T_closed_v(2,1), T_closed_v(2,2), w);
+    bodemag(T_closed_mid(1,1), T_closed_mid(1,2), ...
+        T_closed_mid(2,1), T_closed_mid(2,2), w);
     grid on;
-    legend('vC_d/vC_d_ref', 'vC_d/vC_q_ref', ...
-        'vC_q/vC_d_ref', 'vC_q/vC_q_ref', 'Location', 'best');
-    title('GFM voltage-loop closed-loop response');
+    legend('vMid_d/vMid_d_ref', 'vMid_d/vMid_q_ref', ...
+        'vMid_q/vMid_d_ref', 'vMid_q/vMid_q_ref', 'Location', 'best');
+    title('GFM midpoint-voltage-loop closed-loop response');
 
     figure;
-    bodemag(G_v(1,1), G_v_raw(1,1), w);
+    bodemag(G_mid(1,1), G_mid_raw(1,1), w);
     grid on;
     legend('Tuned voltage plant', 'Raw voltage plant', 'Location', 'best');
     title('Voltage-loop tuning-plant comparison');
@@ -444,6 +451,8 @@ GFM_VL.Kp = Kp_v_used;
 GFM_VL.Ki = Ki_v_used;
 GFM_VL.TargetBandwidthHz = target_voltage_bandwidth_hz;
 GFM_VL.CurrentToVoltageBandwidthRatio = voltage_to_current_bw_ratio;
+GFM_VL.FeedbackVoltage = 'midpoint_voltage';
+GFM_VL.InternalVoltageDefinition = 'midpoint_voltage';
 GFM_VL.UseI2Feedforward = use_i2_feedforward;
 GFM_VL.UseDQDecouplingInTuning = ...
     use_voltage_dq_decoupling_in_tuning;
@@ -468,7 +477,7 @@ function A = buildFullLclClosedLoop( ...
         L1, R_L1, Cf, R_C, L2, R_L2, w0, ...
         currentKp, currentKi, voltageKp, voltageKi, ...
         useI2Feedforward, useVoltageDecoupling, ...
-        useCurrentDecoupling)
+        useCurrentDecoupling, useMidpointVoltageFeedforward)
 % 完整 LCL 闭环模型的状态顺序：
 % [i1_d i1_q vC_d vC_q i2_d i2_q xi_id xi_iq xi_vd xi_vq].
 
@@ -484,10 +493,13 @@ xiIq = selector(8,:);
 xiVd = selector(9,:);
 xiVq = selector(10,:);
 
-i1dRef = -voltageKp*vCd + voltageKi*xiVd ...
+vMidd = vCd + R_C*(i1d-i2d);
+vMidq = vCq + R_C*(i1q-i2q);
+
+i1dRef = -voltageKp*vMidd + voltageKi*xiVd ...
     + double(useI2Feedforward)*i2d ...
     - double(useVoltageDecoupling)*Cf*w0*vCq;
-i1qRef = -voltageKp*vCq + voltageKi*xiVq ...
+i1qRef = -voltageKp*vMidq + voltageKi*xiVq ...
     + double(useI2Feedforward)*i2q ...
     + double(useVoltageDecoupling)*Cf*w0*vCd;
 
@@ -497,16 +509,23 @@ controlVd = currentKp*errorId + currentKi*xiId;
 controlVq = currentKp*errorIq + currentKi*xiIq;
 
 A = zeros(10);
-A(1,:) = (controlVd-R_C*(i1d-i2d)-R_L1*i1d)/L1 ...
-    + (1-double(useCurrentDecoupling))*w0*i1q;
-A(2,:) = (controlVq-R_C*(i1q-i2q)-R_L1*i1q)/L1 ...
-    - (1-double(useCurrentDecoupling))*w0*i1d;
+if useMidpointVoltageFeedforward
+    A(1,:) = (controlVd-R_L1*i1d)/L1 ...
+        + (1-double(useCurrentDecoupling))*w0*i1q;
+    A(2,:) = (controlVq-R_L1*i1q)/L1 ...
+        - (1-double(useCurrentDecoupling))*w0*i1d;
+else
+    A(1,:) = (controlVd-R_C*(i1d-i2d)-R_L1*i1d)/L1 ...
+        + (1-double(useCurrentDecoupling))*w0*i1q;
+    A(2,:) = (controlVq-R_C*(i1q-i2q)-R_L1*i1q)/L1 ...
+        - (1-double(useCurrentDecoupling))*w0*i1d;
+end
 A(3,:) = (i1d-i2d)/Cf + w0*vCq;
 A(4,:) = (i1q-i2q)/Cf - w0*vCd;
 A(5,:) = (vCd+R_C*(i1d-i2d)-R_L2*i2d)/L2 + w0*i2q;
 A(6,:) = (vCq+R_C*(i1q-i2q)-R_L2*i2q)/L2 - w0*i2d;
 A(7,:) = errorId;
 A(8,:) = errorIq;
-A(9,:) = -vCd;
-A(10,:) = -vCq;
+A(9,:) = -vMidd;
+A(10,:) = -vMidq;
 end

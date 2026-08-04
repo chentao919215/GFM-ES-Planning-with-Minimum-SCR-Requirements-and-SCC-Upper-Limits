@@ -1,5 +1,59 @@
 # GFM-ES安全配置优化项目
 
+## 最近更新：设备级 GFL/GFM Simulink 模型
+
+本项目同时维护构网型变流器（GFM）与跟网型变流器（GFL）的设备级 Simulink 模型。设备级脚本已按用途分类，脚本调用应使用下列新路径。
+
+### 设备脚本目录
+
+```text
+code/scripts/equipment/
+  GFL/
+    Find_CgSCR.m
+    GFL_Current_Loop_PI_Calculation.m
+    GFL_Parameters.m
+  GFM/
+    GFM_Current_Loop_PI_Calculation.m
+    GFM_Parameters.m
+    GFM_Voltage_Loop_PI_Calculation.m
+  Others/
+    Generator_Parameters.m
+    Invert_Generator_Parameters.m
+  for_report/04/
+    Report04_Section5_3_Case_Study.m
+```
+
+### GFM 模型入口
+
+- 模型：`simulink/models/Grid_Forming_Inverters.slx`
+- 参数脚本：`code/scripts/equipment/GFM/GFM_Parameters.m`
+- 电流环整定：`code/scripts/equipment/GFM/GFM_Current_Loop_PI_Calculation.m`
+- 电压环整定：`code/scripts/equipment/GFM/GFM_Voltage_Loop_PI_Calculation.m`
+- 模型启动回调会根据模型文件位置定位项目根目录，不依赖 MATLAB 当前工作目录。
+- GFM 参数脚本独立定义基础参数、GFM 电流环、电压环、下垂控制和虚拟阻抗参数，不动态调用 GFL 参数脚本。
+
+GFM 控制链以 PCC 侧 P/Q 测量、P-f/Q-E 下垂控制、`vMid` 电压外环和 `i1` 电流内环为基础。`Future_Extensions_Hook` 预留可旁路的虚拟阻抗限流接口；旁路时应保持下垂参考电压不变。
+
+### 运行与验证
+
+在 MATLAB 中可使用以下方式加载 GFM 参数：
+
+```matlab
+Project_Root = 'D:\Project_With_Codex\Project_2';
+addpath(fullfile(Project_Root, 'code', 'functions', 'equipment'));
+run(fullfile(Project_Root, 'code', 'scripts', 'equipment', ...
+    'GFM', 'GFM_Parameters.m'));
+```
+
+GFM 模型的辅助构建与验证入口为：
+
+```matlab
+build_gfm_model;
+report = validate_gfm_model;
+```
+
+当前参数脚本已能够从分类后的新目录独立运行，模型回调中的 GFM 与混合电源参数路径也已同步更新。现阶段 `validate_gfm_model` 仍会在模型结构检查阶段报告缺少预期模块 `Grid_Forming_Inverters/GFM_1/GFM_Control/PQ_Measurement`；因此在该模块路径与验证脚本一致之前，不应将 GFM 模型标记为已完成编译和验收。
+
 本项目研究高比例跟网型风电（GFL-WG）接入条件下，构网型储能（GFM-ES）的选址、定容与运行协同优化。当前模型在统一框架中联合考虑风电可用出力不确定性、同步机启停、GFM-ES模块化投建、储能充放电、系统运行成本、短路电流上限与经典短路比（SCR）下限。
 
 ## 当前进度
@@ -27,7 +81,7 @@
 
 - `Grid_Following_Inverters_LVRT.slx`支持自动电流参考和手动电流参考两种模式；
 - 手动参考电流仍经过LVRT和无功优先限流环节，不绕过故障穿越控制；
-- 参数脚本为 `code/scripts/equipment/GFL_Parameters.m`，默认手动参考由 `Manual_Current_Ref`、`Id_ref_manual` 和 `Iq_ref_manual` 控制；
+- 参数脚本为 `code/scripts/equipment/GFL/GFL_Parameters.m`，默认手动参考由 `Manual_Current_Ref`、`Id_ref_manual` 和 `Iq_ref_manual` 控制；
 - 报告图5-2扫描脚本为 `code/scripts/figure/for_report/report_04/plot_fig_05_02.m`，输出位于 `figs/for_report/`；
 - Simulink模型统一位于 `simulink/models/`，缓存和代码生成文件统一位于 `simulink/artifacts/`；
 - 模型 `InitFcn` 已自动配置Simulink生成目录，手动运行模型时不再依赖当前工作目录。

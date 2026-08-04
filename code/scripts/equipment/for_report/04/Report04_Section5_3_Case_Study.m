@@ -14,7 +14,7 @@ clc;
 
 scriptDir = fileparts(mfilename('fullpath'));
 projectRoot = fileparts(fileparts(fileparts(fileparts(fileparts(scriptDir)))));
-paramDir = fullfile(projectRoot, 'code', 'scripts', 'equipment');
+paramDir = fullfile(projectRoot, 'code', 'scripts', 'equipment', 'Others');
 functionDir = fullfile(projectRoot, 'code', 'functions', 'equipment');
 modelFile = fullfile(projectRoot, 'simulink', 'models', ...
     'Grid_Following_Inverter_Generator.slx');

@@ -27,7 +27,7 @@ end
 file_generation_cleanup = configure_simulink_file_generation(project_root); %#ok<NASGU>
 
 param_file = fullfile(code_dir, 'scripts', 'equipment', ...
-    'GFL_Parameters.m');
+    'GFL', 'GFL_Parameters.m');
 model_file = fullfile(project_root, 'simulink', 'models', ...
     'Grid_Following_Inverters_LVRT.slx');
 output_dir = fullfile(project_root, 'figs', 'for_report');

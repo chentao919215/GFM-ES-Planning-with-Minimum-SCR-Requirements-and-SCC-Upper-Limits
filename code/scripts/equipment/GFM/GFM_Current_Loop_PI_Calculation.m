@@ -3,7 +3,8 @@
 %
 % 建模口径：
 % 1. 控制对象为流过逆变器侧电感 L1 的电流 i1。
-% 2. 电流环采用理想电容电压 vC 前馈，因此等效串联电阻包含 R_C。
+% 2. 本方案采用 LCL 中点电压 vMid 前馈，因此电流环对象中的串联电阻
+%    主要为逆变器侧电阻 R_L1，R_C 压降由 vMid 前馈直接包含。
 % 3. 根据模型中的 dq 解耦配置决定整定对象是否保留交叉耦合项。
 % 4. 最终结果写入 GFM_CL 结构体，供 GFM_Parameters.m 复核使用。
 
@@ -20,13 +21,13 @@ R_L2 = 0.05;       % 网侧电阻，仅用于与完整 LCL 参数保持一致 [o
 fg = 50;           % 额定电网频率 [Hz]
 w0 = 2*pi*fg;      % 同步 dq 坐标系角频率 [rad/s]
 
-target_bandwidth_hz = 100;
+target_bandwidth_hz = 200;
 wc = 2*pi*target_bandwidth_hz;
 
 % 电压前馈方式：
 % 'capacitor_voltage' 表示前馈理想电容电压，此时电流环对象包含 R_C；
 % 'midpoint_voltage' 表示前馈 LCL 物理中点电压，此时对象只包含 R_L1。
-voltage_feedforward_mode = 'capacitor_voltage';
+voltage_feedforward_mode = 'midpoint_voltage';
 
 % 仅当 Simulink 电流控制器显式补偿 +/-w0*L1*i1 交叉耦合项时设为 true。
 use_dq_decoupling_in_tuning = false;
