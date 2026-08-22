@@ -23,7 +23,10 @@ params.Network.Branch_Scale = struct( ...
     'r', 7/4, ...
     'x', 7/4, ...
     'b', 4/7);
-params.Network.Xd_Gen = 0.04;
+% Xd_Gen先按设备基准输入，再换算为系统基准。
+x_Gen_Device = 0.10 * ones(size(mpc.gen, 1), 1);
+params.Network.Xd_Gen = x_Gen_Device .* params.Network.Base_MVA ./ ...
+    mpc.gen(:, 9);
 params.Network.Gen_Cost_Breakpoints = 0:0.1:1;
 
 %% 2. GFL_WG
@@ -33,10 +36,12 @@ params.GFL_WG.Built_Nodes = [11, 18];
 params.GFL_WG.PN_MW = 60;
 params.GFL_WG.Curtailment_Cost_per_MWh = 30;
 params.GFL_WG.K_Q = 1.5;
-params.GFL_WG.I_N_Rated = 1.0;
-params.GFL_WG.V_LVRT_On = 0.9;
+params.GFL_WG.I_N_Rated  = 1.0;
+params.GFL_WG.V_LVRT_On  = 0.9;
 params.GFL_WG.V_LVRT_Sat = 0.2;
-params.GFL_WG.Delta_I_Rated = 1.05;
+params.GFL_WG.Delta_I_Rated = params.GFL_WG.K_Q * ...
+    params.GFL_WG.I_N_Rated * (params.GFL_WG.V_LVRT_On - ...
+    params.GFL_WG.V_LVRT_Sat);
 
 %% 3. GFM_Modules
 % 模块候选位置、模块额定参数、储能参数、电气参数和成本参数。
@@ -71,9 +76,9 @@ params.GFM_Modules.Storage.SOC_Initial = 0.5;
 params.GFM_Modules.Storage.SOC_Min = 0.1;
 
 params.GFM_Modules.Electrical = struct();
-params.GFM_Modules.Electrical.I_Post_Multiplier = [3, 3, 3, 3, 3, 3];
+params.GFM_Modules.Electrical.I_Post_Multiplier = [1.5, 1.5, 1.5, 1.5, 1.5, 1.5];
 % X_GFM_res先按设备基准输入，再换算为系统基准。
-x_GFM_Res_Device = [0.04, 0.04, 0.04, 0.04, 0.04, 0.04];
+x_GFM_Res_Device = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1];
 params.GFM_Modules.Electrical.X_GFM_vir = ...
     (1 ./ params.GFM_Modules.Electrical.I_Post_Multiplier - ...
     x_GFM_Res_Device) .* params.Network.Base_MVA ./ ...
@@ -93,82 +98,121 @@ params.Security.Require_Source_Online = true;
 % 典型日、时段、负荷曲线以及风电场景参数。
 params.Multiple_Snapshot = struct();
 
+Data_Directory = fileparts(Parameter_Directory);
+RTS_GMLC_Run_Directory = fullfile(Data_Directory, 'RTS-GMLC', ...
+    'processed', 'rts_gmlc_v0.2.3_fixed_extreme_medoids', ...
+    'run_20260822_162606');
+RTS_GMLC_Result_File = fullfile(RTS_GMLC_Run_Directory, ...
+    'rts_gmlc_typical_days_and_wind_scenarios_20260822_162606.mat');
+if ~isfile(RTS_GMLC_Result_File)
+    error('未找到指定的RTS-GMLC时序结果：%s', RTS_GMLC_Result_File);
+end
+load(RTS_GMLC_Result_File, 'Result');
+
+Selected_D = 4;
+Selected_K = 4;
+D_Index = find([Result.Typical_Day_Sets.D] == Selected_D, 1);
+if isempty(D_Index)
+    error('指定的RTS-GMLC时序结果中不存在D=%d的典型日。', Selected_D);
+end
+Typical_Days = Result.Typical_Day_Sets(D_Index);
+Scenario_Row = Result.Wind_Scenario_Sets(D_Index, :);
+K_Index = find([Scenario_Row.K] == Selected_K, 1);
+if isempty(K_Index)
+    error('指定的RTS-GMLC时序结果中不存在D=%d、K=%d的风电场景。', ...
+        Selected_D, Selected_K);
+end
+Wind_Scenarios = Scenario_Row(K_Index);
+if ~Wind_Scenarios.Available
+    error('指定的D=%d、K=%d风电场景不可用：%s', ...
+        Selected_D, Selected_K, Wind_Scenarios.Unavailable_Reason);
+end
+
+D = Typical_Days.Total_Typical_Day_Count;
+K = Wind_Scenarios.K;
+T = Result.Dimensions.Period_Count;
+Load_Factor = Typical_Days.System_Load_Normalized;
+Wind_DA_Factor = Typical_Days.Wind_DA_System_Normalized;
+Wind_Scenario_Factor = Wind_Scenarios.Wind_Scenario_Normalized;
+Scenario_Probabilities = Wind_Scenarios.Probability;
+
+if D ~= Selected_D || K ~= Selected_K || T ~= 24 || ...
+        Result.Dimensions.Period_Duration_Hours ~= 1
+    error('指定时序数据应满足D=4、K=4且每个典型日包含24个1 h时段。');
+end
+if ~isequal(size(Load_Factor), [D, T]) || ...
+        ~isequal(size(Wind_DA_Factor), [D, T]) || ...
+        ~isequal(size(Wind_Scenario_Factor), [D, K, T]) || ...
+        ~isequal(size(Scenario_Probabilities), [D, K])
+    error('指定RTS-GMLC典型日或风电场景数据的维度与D、K、T不一致。');
+end
+if any(~isfinite(Load_Factor(:))) || any(Load_Factor(:) < 0) || ...
+        any(~isfinite(Wind_DA_Factor(:))) || any(Wind_DA_Factor(:) < 0) || ...
+        any(~isfinite(Wind_Scenario_Factor(:))) || ...
+        any(Wind_Scenario_Factor(:) < 0)
+    error('指定RTS-GMLC负荷与风电时序应为有限非负数。');
+end
+if any(~isfinite(Scenario_Probabilities(:))) || ...
+        any(Scenario_Probabilities(:) <= 0) || ...
+        any(abs(sum(Scenario_Probabilities, 2) - 1) > 1e-12)
+    error('指定RTS-GMLC风电场景概率应为正数且逐典型日合计为1。');
+end
+if any(Typical_Days.Weight_Days <= 0) || ...
+        sum(Typical_Days.Weight_Days) ~= 365
+    error('指定RTS-GMLC典型日权重应为正数且合计为365天。');
+end
+
 params.Multiple_Snapshot.Time = struct();
-params.Multiple_Snapshot.Time.Typical_Day_Count = 3;
-params.Multiple_Snapshot.Time.Period_Count = 12;
-params.Multiple_Snapshot.Time.Typical_Day_Weights_Days = [255, 55, 55];
-params.Multiple_Snapshot.Time.Period_Durations_Hours = 2 * ones(1, 12);
+params.Multiple_Snapshot.Time.Typical_Day_Count = D;
+params.Multiple_Snapshot.Time.Period_Count = T;
+params.Multiple_Snapshot.Time.Typical_Day_Weights_Days = ...
+    reshape(Typical_Days.Weight_Days, 1, D);
+params.Multiple_Snapshot.Time.Period_Durations_Hours = ...
+    Result.Dimensions.Period_Duration_Hours * ones(1, T);
 
 params.Multiple_Snapshot.Profiles = struct();
-% Factor每行对应一个典型日，每列分别对应GFL-WG出力和负荷。
-params.Multiple_Snapshot.Profiles.Factor = [1.0, 1.0; ...
-                                             1.1, 0.9; ...
-                                             0.9, 1.0];
-
-params.Multiple_Snapshot.Wind_Scenarios = struct();
-params.Multiple_Snapshot.Wind_Scenarios.Count = 3;
-params.Multiple_Snapshot.Wind_Scenarios.Names = {'low', 'base', 'high'};
-params.Multiple_Snapshot.Wind_Scenarios.Probabilities = [0.25, 0.50, 0.25];
-params.Multiple_Snapshot.Wind_Scenarios.Scale_Factors = [0.8, 1.0, 1.2];
-params.Multiple_Snapshot.Wind_Scenarios.Generation_Mode = 'scale_base_profiles';
-
-% 由MOST示例曲线生成确定性逐时基准数据。
-D = params.Multiple_Snapshot.Time.Typical_Day_Count;
-T = params.Multiple_Snapshot.Time.Period_Count;
-Typical_Day_Factor = params.Multiple_Snapshot.Profiles.Factor;
-if ~isequal(size(Typical_Day_Factor), [D, 2])
-    error(['Multiple_Snapshot.Profiles.Factor的维度应为', ...
-        'Typical_Day_Count×2，即%d×2。'], D);
-end
-if any(~isfinite(Typical_Day_Factor(:))) || any(Typical_Day_Factor(:) <= 0)
-    error('Multiple_Snapshot.Profiles.Factor中的缩放因子应为有限正数。');
-end
-
-MOST_Load_Profile = ex_load_profile;
-MOST_Base_Case = loadcase('ex_case3b');
-MOST_Load_Base_MW = total_load(MOST_Base_Case.bus, MOST_Base_Case.gen);
-Load_Total_MW = MOST_Load_Profile.values(:, 1, 1);
-Load_Factor = Load_Total_MW / MOST_Load_Base_MW;
-for i = 1:size(Load_Factor, 1) / 2
-    temp = Load_Factor(i);
-    Load_Factor(i) = Load_Factor(end + 1 - i);
-    Load_Factor(end + 1 - i) = temp;
-end
-Load_Node_Period = mpc.bus(:, 3) * Load_Factor.';
+% 指定时序不再使用典型日标量缩放，保留空字段以满足现有公开参数接口。
+params.Multiple_Snapshot.Profiles.Factor = [];
 params.Multiple_Snapshot.Profiles.Load_Factor = Load_Factor;
 params.Multiple_Snapshot.Profiles.Load_P_MW = ...
-    reshape(Load_Node_Period, size(mpc.bus, 1), 1, T) .* ...
-    reshape(Typical_Day_Factor(:, 2), 1, D, 1);
+    reshape(mpc.bus(:, 3), size(mpc.bus, 1), 1, 1) .* ...
+    reshape(Load_Factor, 1, D, T);
 
-MOST_Wind_Profile = ex_wind_profile_d;
-Wind_Available_Factor = MOST_Wind_Profile.values(:, 1, 1);
-for i = 1:size(Wind_Available_Factor, 1) / 2
-    temp = Wind_Available_Factor(i);
-    Wind_Available_Factor(i) = Wind_Available_Factor(end + 1 - i);
-    Wind_Available_Factor(end + 1 - i) = temp;
-end
 GFL_Rated_Node = zeros(size(mpc.bus, 1), 1);
 GFL_Rated_Node(params.GFL_WG.Built_Nodes) = params.GFL_WG.PN_MW;
-GFL_Node_Period = GFL_Rated_Node * Wind_Available_Factor.';
+% 确定性基准接口采用典型日的日前风电曲线。
 params.Multiple_Snapshot.Profiles.GFL_Available_P_MW = ...
-    reshape(GFL_Node_Period, size(mpc.bus, 1), 1, T) .* ...
-    reshape(Typical_Day_Factor(:, 1), 1, D, 1);
+    reshape(GFL_Rated_Node, size(mpc.bus, 1), 1, 1) .* ...
+    reshape(Wind_DA_Factor, 1, D, T);
+
+params.Multiple_Snapshot.Wind_Scenarios = struct();
+params.Multiple_Snapshot.Wind_Scenarios.Count = K;
+params.Multiple_Snapshot.Wind_Scenarios.Names = ...
+    arrayfun(@(k) sprintf('scenario_%d', k), 1:K, ...
+    'UniformOutput', false);
+params.Multiple_Snapshot.Wind_Scenarios.Probabilities = ...
+    Scenario_Probabilities;
+params.Multiple_Snapshot.Wind_Scenarios.Generation_Mode = 'explicit';
+params.Multiple_Snapshot.Wind_Scenarios.P_GFL_Available_Scenarios = ...
+    reshape(GFL_Rated_Node, size(mpc.bus, 1), 1, 1, 1) .* ...
+    reshape(Wind_Scenario_Factor, 1, D, K, T);
 
 %% 6. UC
 % 同步机最小出力、爬坡、最小开停机时间和启停成本。
 params.UC = struct();
-params.UC.Cost_Loading = 0.05;
-params.UC.Gen_Pmin_MW = 0.2 * mpc.gen(:, 9);
-Gen_Cost_At_5_Pct = mpc.gencost(:, 5) .* ...
-    (params.UC.Cost_Loading * mpc.gen(:, 9)).^2 + ...
-    mpc.gencost(:, 6) .* ...
-    (params.UC.Cost_Loading * mpc.gen(:, 9));
-params.UC.Ramp_Up_Rate_MW_per_Hour = 0.2 * mpc.gen(:, 9);
-params.UC.Ramp_Down_Rate_MW_per_Hour = 0.2 * mpc.gen(:, 9);
-params.UC.Min_Up_Periods = ones(size(mpc.gen, 1), 1);
-params.UC.Min_Down_Periods = ones(size(mpc.gen, 1), 1);
-params.UC.Startup_Cost = 1.0 * Gen_Cost_At_5_Pct;
-params.UC.Shutdown_Cost = 0.25 * Gen_Cost_At_5_Pct;
+UC_Generator_Buses = [1; 2; 22; 27; 23; 13];
+if ~isequal(mpc.gen(:, 1), UC_Generator_Buses)
+    error('case30同步机顺序与算例表2不一致。');
+end
+params.UC.Gen_Pmin_MW = [20; 20; 10; 11; 6; 8];
+params.UC.Ramp_Up_Rate_MW_per_Hour = [20; 20; 10; 11; 6; 8];
+params.UC.Ramp_Down_Rate_MW_per_Hour = [24; 24; 18; 20; 12; 14];
+params.UC.Min_Up_Periods = [4; 4; 4; 4; 2; 4];
+params.UC.Min_Down_Periods = [4; 4; 2; 2; 2; 2];
+Gen_Cost_Full_Load = mpc.gencost(:, 5) .* mpc.gen(:, 9).^2 + ...
+    mpc.gencost(:, 6) .* mpc.gen(:, 9) + mpc.gencost(:, 7);
+params.UC.Startup_Cost = 0.5 * Gen_Cost_Full_Load;
+params.UC.Shutdown_Cost = 0.05 * Gen_Cost_Full_Load;
 
 %% 7. Solver
 % 数值稳定性、Gurobi性能及两阶段求解参数。
@@ -210,8 +254,9 @@ fclose(fid);
 fprintf('已生成参数文件：%s\n', Output_File);
 
 %% 9. 清除本脚本生成的临时变量
-clear D T ans fid Gen_Cost_At_5_Pct GFL_Node_Period GFL_Rated_Node i ...
-    JSON_Text Load_Factor Load_Node_Period Load_Total_MW ...
-    MOST_Base_Case MOST_Load_Base_MW MOST_Load_Profile MOST_Wind_Profile ...
-    Output_File Parameter_Directory params temp Typical_Day_Factor ...
-    Wind_Available_Factor x_GFM_Res_Device mpc
+clear D D_Index Data_Directory K K_Index Selected_D Selected_K T ans fid ...
+    Gen_Cost_Full_Load GFL_Rated_Node JSON_Text Load_Factor ...
+    Output_File Parameter_Directory params Result RTS_GMLC_Result_File ...
+    RTS_GMLC_Run_Directory Scenario_Probabilities Scenario_Row ...
+    Typical_Days UC_Generator_Buses Wind_DA_Factor ...
+    Wind_Scenario_Factor Wind_Scenarios x_Gen_Device x_GFM_Res_Device mpc
