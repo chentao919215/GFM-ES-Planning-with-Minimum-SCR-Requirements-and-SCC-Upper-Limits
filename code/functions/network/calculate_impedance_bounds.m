@@ -19,7 +19,7 @@ C = size(Configuration_Status,1);
 SG_States = local_build_binary_states(G);
 State_Count = size(SG_States,1);
 Y_SG_Unit = 1./(1i*CONF.Xd_Gen(:));
-Y_GFM_Unit = 1./(1i*CONF.GFM_Module_X_res(:));
+Y_GFM_Unit = 1./(1i*CONF.GFM_Module_X_Res(:));
 
 SCC_Extrema = local_initialize_extrema(NS,NS);
 SCR_Extrema = local_initialize_extrema(NS,NGFL);
@@ -93,17 +93,17 @@ for c = 1:C
             Z_SCC_Scaled = CONF.KZ*Z_SCC;
             SCC_Extrema = local_update_extrema(SCC_Extrema,Z_SCC_Scaled);
 
-            % tau(c,n,p)为X_SCC(nn)*|Z_fault(np)/Z_fault(nn)|的KZ缩放值；
-            % 按文档采用电抗主导的标量网络近似。
+            % tau(c,n,p)为X_SCC(nn)*|Z_fault(np)/Z_fault(nn)|的KZ缩放值。
             x_SCC = imag(diag(Z_SCC));
-            x_Fault = imag(diag(Z_Fault));
-            z_Fault_Imag = imag(Z_Fault);
             for n = 1:NS
                 for GFL_Index = 1:NGFL
                     p = GFL_Columns(GFL_Index);
-                    ratio = z_Fault_Imag(n,p)/x_Fault(n);
-                    candidate = CONF.KZ*x_SCC(n)*max(0,abs(ratio));
-                    Tau_Scaled(c,n,GFL_Index) = max(Tau_Scaled(c,n,GFL_Index),candidate);
+
+                    transfer_ratio = abs(Z_Fault(n,p) / Z_Fault(n,n));
+                    candidate = CONF.KZ * x_SCC(n) * transfer_ratio;
+
+                    Tau_Scaled(c,n,GFL_Index) = ...
+                        max(Tau_Scaled(c,n,GFL_Index), candidate);
                     Tau_Seen(c,n,GFL_Index) = true;
                 end
             end

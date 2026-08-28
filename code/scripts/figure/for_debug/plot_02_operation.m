@@ -1,9 +1,9 @@
 %% 分别生成运行平衡、同步机启停、GFL-WG和储能运行图及表格。
 % 以下路径留空时，脚本自动使用最新结果、默认参数文件和默认输出目录。
-if ~exist('result_file', 'var'), Result_File = ''; end
-if ~exist('output_dir', 'var'), Output_Directory = ''; end
-if ~exist('param_file', 'var'), Parameter_File = ''; end
-if ~exist('scenario_index', 'var'), Scenario_Index = []; end
+if ~exist('Result_File', 'var'), Result_File = ''; end
+if ~exist('Output_Directory', 'var'), Output_Directory = ''; end
+if ~exist('Parameter_File', 'var'), Parameter_File = ''; end
+if ~exist('Scenario_Index', 'var'), Scenario_Index = []; end
 [Data, Output_Directory] = load_figure_data(Result_File, Output_Directory, ...
     Parameter_File, '02_operation', Scenario_Index);
 
@@ -216,11 +216,36 @@ if ~endsWith(File_Path, '.fig', 'IgnoreCase', true)
     File_Path = [File_Path '.fig'];
 end
 set(fig, 'Visible', 'on');
-savefig(fig, File_Path);
-set(fig, 'Visible', 'off');
 Png_Path = strrep(File_Path, '.fig', '.png');
-exportgraphics(fig, Png_Path, 'Resolution', 600, 'BackgroundColor', 'white');
+Output_Directory = fileparts(File_Path);
+Temp_Fig_Path = [tempname(Output_Directory) '.fig'];
+Temp_Png_Path = [tempname(Output_Directory) '.png'];
+Cleanup_Temp_Files = onCleanup(@() delete_temp_files( ...
+    {Temp_Fig_Path, Temp_Png_Path})); %#ok<NASGU>
+
+% 先写临时文件，再替换目标文件，避免旧FIG文件状态影响savefig。
+savefig(fig, Temp_Fig_Path);
+exportgraphics(fig, Temp_Png_Path, 'Resolution', 600, ...
+    'BackgroundColor', 'white');
+replace_file(Temp_Fig_Path, File_Path);
+replace_file(Temp_Png_Path, Png_Path);
+set(fig, 'Visible', 'off');
 close(fig);
+end
+
+function replace_file(Source_Path, Target_Path)
+[Success, Message] = movefile(Source_Path, Target_Path, 'f');
+if ~Success
+    error('无法替换图件文件%s：%s', Target_Path, Message);
+end
+end
+
+function delete_temp_files(File_Paths)
+for k = 1:numel(File_Paths)
+    if isfile(File_Paths{k})
+        delete(File_Paths{k});
+    end
+end
 end
 
 function row = validation_row(name, value, tolerance, unit)

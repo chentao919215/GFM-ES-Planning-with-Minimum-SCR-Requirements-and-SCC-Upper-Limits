@@ -19,6 +19,13 @@ disp(Result.u_G_SCC);
 fprintf('u_G_SCR（各典型日内交集）：\n');
 disp(Result.u_G_SCR);
 
+fprintf('SCC_0（全同步机基准结果，kA；行=原始节点，列=典型日）：\n');
+disp(Result.SCC_0);
+fprintf('SCC_1（优化模型计算结果，kA；非安全网络保留节点为0）：\n');
+disp(Result.SCC_1);
+fprintf('SCC_2（后验复算结果，kA；行=原始节点，列=典型日）：\n');
+disp(Result.SCC_2);
+
 fprintf('GFM-ES模块投建 u_GFM_Mod：1 = 投建，0 = 不投建。\n');
 disp(Result.u_GFM_Mod);
 

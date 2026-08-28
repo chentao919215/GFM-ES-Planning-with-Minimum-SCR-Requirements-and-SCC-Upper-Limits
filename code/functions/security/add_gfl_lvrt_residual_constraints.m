@@ -31,7 +31,7 @@ end
 
 B0 = -imag(NET.Y_0_Safety);
 b_SG = -imag(1./(1i*CONF.Xd_Gen(:)));
-b_GFM = 1./CONF.GFM_Module_X_res(:);
+b_GFM = 1./CONF.GFM_Module_X_Res(:);
 
 % 文档2.4.3 GFL-WG故障电压与LVRT增量电流约束，式(1.52)-(1.69)。
 C_LVRT = [V_F(:) >= 0, V_F(:) <= 1, ...

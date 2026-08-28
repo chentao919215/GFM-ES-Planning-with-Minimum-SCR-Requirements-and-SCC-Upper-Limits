@@ -84,9 +84,9 @@ CONF.GFM_Module_Order = GFM_Modules.Order;
 CONF.GFM_Module_PN = GFM_Modules.PN_MW;
 CONF.GFM_Module_PN_pu = GFM_Modules.PN_MW/CONF.Base_MVA;
 CONF.GFM_Module_Rated_Energy = GFM_Modules.Rated_Energy_MWh;
-CONF.GFM_Module_X_res = GFM_Modules.X_GFM_res;
+CONF.GFM_Module_X_Res = GFM_Modules.X_GFM_Res;
 CONF.GFM_Module_I_post = GFM_Modules.I_Post;
-CONF.GFM_Module_X_vir = GFM_Modules.X_GFM_vir;
+CONF.GFM_Module_X_Vir = GFM_Modules.X_GFM_Vir;
 CONF.GFM_Module_DeltaY = GFM_Modules.Delta_Y;
 CONF.GFM_Module_DeltaY_abs = GFM_Modules.Delta_B;
 CONF.GFM_Module_Loc_Mat = sparse(GFM_Modules.Bus,(1:GFM_Modules.Count)', ...
@@ -319,8 +319,8 @@ CONF_Public.GFM_Modules.Electrical = struct();
 CONF_Public.GFM_Modules.Electrical.I_Post_Multiplier = ...
     CONF.GFM_Module_I_Post_Multiplier;
 CONF_Public.GFM_Modules.Electrical.I_post = CONF.GFM_Module_I_post;
-CONF_Public.GFM_Modules.Electrical.X_GFM_res = CONF.GFM_Module_X_res;
-CONF_Public.GFM_Modules.Electrical.X_GFM_vir = CONF.GFM_Module_X_vir;
+CONF_Public.GFM_Modules.Electrical.X_GFM_Res = CONF.GFM_Module_X_Res;
+CONF_Public.GFM_Modules.Electrical.X_GFM_Vir = CONF.GFM_Module_X_Vir;
 CONF_Public.GFM_Modules.Electrical.Delta_Y = CONF.GFM_Module_DeltaY;
 CONF_Public.GFM_Modules.Electrical.Delta_Y_abs = CONF.GFM_Module_DeltaY_abs;
 
@@ -442,7 +442,6 @@ CONF_Public.Multiple_Snapshot.Degradation.Deterministic.Input_Equivalent = ...
     CONF.DeterministicDegradation.InputEquivalent;
 
 CONF_Public.UC = struct();
-CONF_Public.UC.Cost_Loading = params.UC.Cost_Loading;
 CONF_Public.UC.Gen_Pmin_MW = CONF.Gen_Pmin;
 CONF_Public.UC.Ramp_Up_Rate_MW_per_Hour = CONF.Gen_Ramp_Up_MW_per_Hour;
 CONF_Public.UC.Ramp_Down_Rate_MW_per_Hour = CONF.Gen_Ramp_Down_MW_per_Hour;
@@ -516,10 +515,10 @@ bus = MODULE.Bus(:);
 n_Modules = numel(bus);
 order = expand_module_parameter(MODULE.Module_Index, n_Modules, 'Module_Index');
 PN_MW = expand_module_parameter(MODULE.PN_MW, n_Modules, 'PN_MW');
-x_Res = expand_module_parameter(ELECTRICAL.X_GFM_res, n_Modules, 'X_GFM_res');
+x_Res = expand_module_parameter(ELECTRICAL.X_GFM_Res, n_Modules, 'X_GFM_Res');
 I_Post_Multiplier = expand_module_parameter( ...
     ELECTRICAL.I_Post_Multiplier, n_Modules, 'I_Post_Multiplier');
-x_Vir = expand_module_parameter(ELECTRICAL.X_GFM_vir, n_Modules, 'X_GFM_vir');
+x_Vir = expand_module_parameter(ELECTRICAL.X_GFM_Vir, n_Modules, 'X_GFM_Vir');
 Rated_Energy = expand_module_parameter( ...
     STORAGE.Rated_Energy_MWh, n_Modules, 'Rated_Energy_MWh');
 Power_Cost = expand_module_parameter( ...
@@ -571,10 +570,10 @@ GFM_Modules.PN_MW = PN_MW;
 GFM_Modules.Rated_Energy_MWh = Rated_Energy;
 GFM_Modules.Annual_Cost_Power_per_MW = Power_Cost;
 GFM_Modules.Annual_Cost_Energy_per_MWh = Energy_Cost;
-GFM_Modules.X_GFM_res = x_Res;
+GFM_Modules.X_GFM_Res = x_Res;
 GFM_Modules.I_Post_Multiplier = I_Post_Multiplier;
 GFM_Modules.I_Post = I_Post_Multiplier.*PN_MW/CONF.Base_MVA;
-GFM_Modules.X_GFM_vir = x_Vir;
+GFM_Modules.X_GFM_Vir = x_Vir;
 GFM_Modules.Delta_B = 1./x_Res-1./(x_Res+x_Vir);
 GFM_Modules.Delta_Y = 1i*GFM_Modules.Delta_B;
 GFM_Modules.Candidate_Bus = Candidate_Bus;

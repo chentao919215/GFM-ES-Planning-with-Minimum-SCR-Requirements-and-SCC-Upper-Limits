@@ -1,4 +1,4 @@
-function Result = package_multiple_snapshot_result(SCC_0,SCC_1,P_Line,theta,P_G,P_GFL,P_GFM,...
+function Result = package_multiple_snapshot_result(SCC_0,SCC_1,SCC_2,P_Line,theta,P_G,P_GFL,P_GFM,...
     SCR,Z_SCC,Z_SCR,u_GFL,u_G,u_G_SCC,u_G_SCR,Cost_CON,Cost_GEN,Cost_Total,...
     Solve_Time,CONF,Diagnostics,u_GFM_Module,P_GFM_Dis,P_GFM_Ch,E_GFM,u_GFM_Ch,...
     P_GFL_Curt,Cost_Curt,u_G_Start,u_G_Stop,Cost_UC)
@@ -15,6 +15,7 @@ Cost.Unit  = 'annual';
 Result = struct();
 Result.SCC_0       = SCC_0;
 Result.SCC_1       = SCC_1;
+Result.SCC_2       = SCC_2;
 Result.P_Line      = P_Line;
 Result.theta       = theta;
 Result.P_G         = P_G;
@@ -71,7 +72,20 @@ Dimensions.ScenarioNodeOperation = ...
 Dimensions.ScenarioGFMOperation = ...
     {'gfm_candidate','typical_day','wind_scenario','period'};
 Dimensions.SafetyState = {'generator','typical_day'};
+Dimensions.SCC = {'node','typical_day'};
 Result.Dimensions = Dimensions;
+
+% 三组SCC采用相同的原始节点顺序、基准值和kA单位。
+SCC_Definition = struct();
+SCC_Definition.SCC_0 = '全同步机基准结果';
+SCC_Definition.SCC_1 = '优化模型计算结果';
+SCC_Definition.SCC_2 = '后验复算结果';
+SCC_Definition.Node_Order = 'MATPOWER原始节点顺序';
+SCC_Definition.Dimension_Order = {'node','typical_day'};
+SCC_Definition.Unit = 'kA';
+SCC_Definition.Base_Current_kA = CONF.Base_kA;
+SCC_Definition.SCC_1_Non_Safety_Node_Value = 0;
+Result.SCC_Definition = SCC_Definition;
 
 % 显式保存原节点与降阶节点映射，便于解释两类阻抗结果的行、列索引。
 Safety_Network = struct();

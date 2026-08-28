@@ -3,7 +3,8 @@ function Data = prepare_figure_data(Result, params, Result_File, Parameter_File,
 
 required = {'P_Line','P_G','P_GFL','P_GFL_Curt','P_GFM_Dis', ...
     'P_GFM_Ch','E_GFM','u_G','u_G_Start','u_G_Stop','u_GFM_Mod', ...
-    'SCC_1','SCR','Z_SCC','Z_SCR','Cost','CONF','SafetyNetwork'};
+    'SCC_0','SCC_1','SCC_2','SCR','Z_SCC','Z_SCR','Cost','CONF', ...
+    'SafetyNetwork','SCC_Definition'};
 missing = required(~isfield(Result, required));
 if ~isempty(missing)
     error('Result is missing required fields: %s', strjoin(missing, ', '));
@@ -58,7 +59,9 @@ assert_size(Result.Z_SCC, [C.Safety_Node_Count C.Safety_Node_Count Data.D], ...
     'Z_SCC');
 assert_size(Result.Z_SCR, [C.Safety_Node_Count C.Safety_GFL_Count Data.D], ...
     'Z_SCR');
+assert_size(Result.SCC_0, [Data.N Data.D], 'SCC_0');
 assert_size(Result.SCC_1, [Data.N Data.D], 'SCC_1');
+assert_size(Result.SCC_2, [Data.N Data.D], 'SCC_2');
 assert_size(Result.SCR, [Data.N Data.D], 'SCR');
 
 Data.Module_Built = module_build_vector(C, Result.u_GFM_Mod);
@@ -158,31 +161,22 @@ Y0 = sparse(fb,fb,y+bsh,Data.N,Data.N) + ...
      sparse(tb,fb,-y,Data.N,Data.N);
 Gen_Location = sparse(Data.Generator_Buses,(1:Data.G).',1,Data.N,Data.G);
 Module_Location = C.GFM_Module_Loc_Mat;
-Ygfm = Module_Location*(Data.Module_Built.*(1./(1i*C.GFM_Module_X_res(:))));
+Ygfm = Module_Location*(Data.Module_Built.*(1./(1i*C.GFM_Module_X_Res(:))));
 
 Security.State_Description = 'within-typical-day aggregated conservative states';
 Security.SCC_Nodes = R.SafetyNetwork.RetainedOriginalNodes(:);
-Security.SCC_Exact_All = zeros(Data.N,Data.D);
-Security.SCC_Exact = zeros(numel(Security.SCC_Nodes),Data.D);
-Security.SCC_Optimization = zeros(numel(Security.SCC_Nodes),Data.D);
-Phi_Security_Scaled = R.Diagnostics.SCCTransferTermScaled;
-for d = 1:Data.D
-    Y_SG_SCC = Gen_Location*(round(R.u_G_SCC(:,d)).* ...
-        (1./(1i*C.Xd_Gen(:))));
-    Z_SCC_Exact = full(Y0+spdiags(Y_SG_SCC+Ygfm,0,Data.N,Data.N))\eye(Data.N);
-    Phi_Full_Scaled = zeros(Data.N,1);
-    Phi_Full_Scaled(Security.SCC_Nodes) = Phi_Security_Scaled(:,d);
-    Security.SCC_Exact_All(:,d) = scc_from_impedance( ...
-        diag(Z_SCC_Exact),(1:Data.N).',Data,Phi_Full_Scaled);
-    Security.SCC_Exact(:,d) = Security.SCC_Exact_All(Security.SCC_Nodes,d);
-    Security.SCC_Optimization(:,d) = scc_from_impedance( ...
-        diag(R.Z_SCC(:,:,d)),Security.SCC_Nodes,Data, ...
-        Phi_Security_Scaled(:,d));
-end
+Security.SCC_Definition = R.SCC_Definition;
+Security.SCC_0_All = R.SCC_0;
+Security.SCC_1_All = R.SCC_1;
+Security.SCC_2_All = R.SCC_2;
+Security.SCC_0 = R.SCC_0(Security.SCC_Nodes,:);
+Security.SCC_1 = R.SCC_1(Security.SCC_Nodes,:);
+Security.SCC_2 = R.SCC_2(Security.SCC_Nodes,:);
 Security.SCC_Limit = repmat(C.I_limit_kA_Node(Security.SCC_Nodes),1,Data.D);
-Security.SCC_Margin = Security.SCC_Limit-Security.SCC_Exact;
-Security.SCC_Relative_Error_Pct = relative_error_pct(...
-    Security.SCC_Optimization, Security.SCC_Exact);
+Security.SCC_1_Margin = Security.SCC_Limit-Security.SCC_1;
+Security.SCC_2_Margin = Security.SCC_Limit-Security.SCC_2;
+Security.SCC_1_vs_SCC_2_Relative_Error_Pct = relative_error_pct( ...
+    Security.SCC_1, Security.SCC_2);
 
 Security.SCR_Nodes = R.SafetyNetwork.SCRColumnOriginalNodes(:);
 pn = C.PN_GFL_pu_Node(Security.SCR_Nodes);
@@ -200,21 +194,6 @@ Security.SCR_Limit = repmat(C.SCR_min,numel(Security.SCR_Nodes),Data.D);
 Security.SCR_Margin = Security.SCR_Exact-Security.SCR_Limit;
 Security.SCR_Relative_Error_Pct = relative_error_pct(...
     Security.SCR_Optimization, Security.SCR_Exact);
-end
-
-function scc = scc_from_impedance(zdiag, Original_Nodes, Data, Phi_Scaled)
-C = Data.CONF;
-xdiag = imag(zdiag(:));
-Phi_Scaled = Phi_Scaled(:);
-if numel(Phi_Scaled) ~= numel(xdiag)
-    error('GFL-WG故障转移项长度与短路阻抗对角线长度不一致。');
-end
-GFM_Delta_All = C.GFM_Module_Loc_Mat * ...
-    (C.GFM_Module_DeltaY_abs(:).*Data.Module_Built);
-GFL_Fault_Increment_All = C.Delta_I_GFL_pu_Node(:).*Data.Result.u_GFL(:);
-scc = ((1+Phi_Scaled/C.KZ)./max(xdiag,1e-12) - ...
-    GFM_Delta_All(Original_Nodes) + ...
-    GFL_Fault_Increment_All(Original_Nodes))*C.Base_kA;
 end
 
 function err = relative_error_pct(approximation, reference)

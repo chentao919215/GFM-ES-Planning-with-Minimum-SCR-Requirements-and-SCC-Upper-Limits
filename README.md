@@ -1,6 +1,6 @@
 # GFM-ES安全配置优化项目
 
-## 最近更新：算例参数与实测时序数据对齐
+## 最近更新：设备级与系统级模型的参数对齐及 GFM 模型完善
 
 本轮更新以 `docs/05_算例参数/基于场景随机优化的多时段模块化GFM-ES配置优化模型_ver_2_算例分析.docx` 为主要依据，并以同目录 PDF 版本交叉核对，对默认多时段算例参数进行了系统更新：
 
@@ -9,6 +9,10 @@
 - 典型日权重、24 h 负荷曲线、逐典型日风电场景及场景概率直接读取 `data/RTS-GMLC/processed/rts_gmlc_v0.2.3_fixed_extreme_medoids/run_20260822_162606/` 中的实际结果；
 - 当前默认规模为 4 个典型日、每个典型日 4 个风电场景、每个典型日 24 个 1 h 时段；
 - 参数维护入口仍为 `data/params/generate_multiple_snapshot_default_params.m`，运行时 JSON 由该脚本生成，二者应保持同步。
+- 设备级 GFL-WG 的 LVRT 参数与系统级 `params.GFL_WG` 参数保持一致，包括额定电流、LVRT 电压阈值、无功电流斜率及附加无功电流上限；
+- 系统级 GFM 电气参数由 `generate_multiple_snapshot_default_params.m` 统一维护，设备级模型通过运行时 JSON 恢复设备基准量，避免系统基准和设备基准混用；
+- `GFM_Inherited_Parameters.m` 集中管理 GFM 公共参数、控制器整定结果和系统级电气参数，`GFM_Parameters.m` 负责模型工作区映射、派生量计算和一致性检查；
+- GFM 模型进一步完善了可编程三相电源、PCC 耦合接口、虚拟阻抗限流状态机及启动/恢复工况验证，并保留参数来源追溯信息。
 
 用于代表日选择、极端日保留和储能成本参数核查的参考文献保存在 `docs/05_算例参数/`。参数具有文献依据并不意味着其可直接作为工程定值；涉及设备成本、故障电流能力、安全阈值及网络强度的参数，仍应结合研究对象开展灵敏度分析。
 
@@ -31,8 +35,12 @@ code/scripts/equipment/
   Others/
     Generator_Parameters.m
     Invert_Generator_Parameters.m
-  for_report/04/
-    Report04_Section5_3_Case_Study.m
+  for_report/
+    report_04/
+      Report04_Section5_3_Case_Study.m
+    report_05/
+      GFM_VI_Port_Characteristic_Validation.m
+      GFM_VI_State_Validation.m
 ```
 
 ### GFM 模型入口
@@ -57,14 +65,17 @@ run(fullfile(Project_Root, 'code', 'scripts', 'equipment', ...
     'GFM', 'GFM_Parameters.m'));
 ```
 
-GFM 模型的辅助构建与验证入口为：
+GFM 模型的参数加载和一致性校验入口为：
 
 ```matlab
-build_gfm_model;
-report = validate_gfm_model;
+addpath(fullfile(Project_Root, 'code', 'functions', 'equipment'));
+run(fullfile(Project_Root, 'code', 'scripts', 'equipment', ...
+    'GFM', 'GFM_Parameters.m'));
 ```
 
-当前参数脚本已能够从分类后的新目录独立运行，模型回调中的 GFM 与混合电源参数路径也已同步更新。现阶段 `validate_gfm_model` 仍会在模型结构检查阶段报告缺少预期模块 `Grid_Forming_Inverters/GFM_1/GFM_Control/PQ_Measurement`；因此在该模块路径与验证脚本一致之前，不应将 GFM 模型标记为已完成编译和验收。
+`GFM_Parameters.m` 会调用 `GFM_Inherited_Parameters.m`，读取系统级运行时 JSON，并将系统基准电气参数换算为设备基准量后提供给模型。脚本同时检查基准量、LCL 参数、控制器增益、下垂限幅、PCC 接口和虚拟阻抗参数之间的一致性。
+
+GFM 模型入口为 `simulink/models/Grid_Forming_Inverters.slx`；虚拟阻抗端口特性和状态切换验证入口分别位于 `code/scripts/equipment/for_report/report_05/`。模型回调会根据模型文件位置定位项目根目录，不依赖 MATLAB 当前工作目录。
 
 本项目研究高比例跟网型风电（GFL-WG）接入条件下，构网型储能（GFM-ES）的选址、定容与运行协同优化。当前模型在统一框架中联合考虑风电可用出力不确定性、同步机启停、GFM-ES模块化投建、储能充放电、系统运行成本、短路电流上限与经典短路比（SCR）下限。
 

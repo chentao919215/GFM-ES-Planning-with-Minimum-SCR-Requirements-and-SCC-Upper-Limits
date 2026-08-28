@@ -11,7 +11,7 @@ File_Generation_Cleanup = configure_simulink_file_generation(Project_Root);
 % 先读取结果元数据，确定场景数量和名称。
 [meta, ~] = load_figure_data('', Debug_Root, '', 'for_debug', 1);
 Scenario_Count = meta.K;
-Scenario_Names = meta.ScenarioNames;
+Scenario_Names = meta.Scenario_Names;
 
 for Scenario_Index = 1:Scenario_Count
     Scenario_Name = char(Scenario_Names{Scenario_Index});

@@ -1,4 +1,4 @@
-function [SCC_0,SCC_1,Value_P_Line,Value_Theta,Value_P_G,Value_P_GFL,Value_P_GFM,...
+function [SCC_0,SCC_1,SCC_2,Value_P_Line,Value_Theta,Value_P_G,Value_P_GFL,Value_P_GFM,...
     SCR,Z_SCC_Val,Z_SCR_Val,Value_u_GFL,Value_u_G,Value_u_G_SCC,Value_u_G_SCR,...
     Value_Cost_CON,Value_Cost_GEN,Value_Cost_Total,Diagnostics,...
     Value_u_GFM_Module,Value_P_GFM_Dis,Value_P_GFM_Ch,Value_E_GFM,...
@@ -636,29 +636,10 @@ for d = 1:D
 end
 
 %% 8. 计算短路电流指标
-% 每个典型日分别恢复完整节点阻抗，并保持SCC结果的原节点索引。
+% SCC_0、SCC_1和SCC_2均按MATPOWER原始节点顺序输出，单位统一为kA。
 Value_u_GFM_Module_Table = Value_u_GFM_Module(Module_Linear_Index);
-Y_GFM_SCC_Node = CONF.GFM_Module_Loc_Mat*(Value_u_GFM_Module_Table.* ...
-    (1./(1i*CONF.GFM_Module_X_res(:))));
-SCC_0 = [];
-SCC_1 = zeros(N,D);
-Phi_GFL_Full_Scaled = zeros(N,D);
-Phi_GFL_Full_Scaled(Safety_Nodes,:) = Diagnostics.SCCTransferTermScaled;
-for d = 1:D
-    Y_SG_SCC_Node_d = NET.Generator_Location_Matrix*(Value_u_G_SCC(:,d).* ...
-        (1./(1i*CONF.Xd_Gen(:))));
-    Y_SCC_Full_d = NET.Y_0+spdiags( ...
-        Y_SG_SCC_Node_d+Y_GFM_SCC_Node,0,N,N);
-    if rcond(full(Y_SCC_Full_d)) < 1e-10
-        error('典型日%d聚合SCC工况的完整节点导纳矩阵不可逆，无法恢复全节点结果。',d);
-    end
-    Z_SCC_Full_d = full(Y_SCC_Full_d)\eye(N);
-    [SCC_0_d, SCC_1(:,d)] = calculate_short_circuit_currents( ...
-        Z_SCC_Full_d,Value_u_GFM_Module_Table,u_GFL,CONF,NET.Y_0, ...
-        NET.Y_SG_Add,Phi_GFL_Full_Scaled(:,d));
-    if isempty(SCC_0)
-        SCC_0 = SCC_0_d;
-    end
-end
+[SCC_0, SCC_1, SCC_2] = calculate_short_circuit_currents( ...
+    NET, CONF, Value_u_GFM_Module_Table, u_GFL, Value_u_G_SCC, ...
+    Z_SCC_Val, Diagnostics.SCCTransferTermScaled);
 
 end

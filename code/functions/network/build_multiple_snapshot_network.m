@@ -95,7 +95,7 @@ Y_SG_Node_Safety = NET.Safety_Generator_Location_Matrix*Y_SG_Unit;
 NET.Y_SG_Add_Safety = sparse(1:NS,1:NS,Y_SG_Node_Safety,NS,NS);
 
 %% 5. 生成模块化GFM-ES导纳参数
-NET.B_GFM_Module      = -1./CONF.GFM_Module_X_res(:);
+NET.B_GFM_Module      = -1./CONF.GFM_Module_X_Res(:);
 NET.Delta_Y_Module     = CONF.GFM_Module_DeltaY(:);
 NET.Delta_Y_Abs_Module = CONF.GFM_Module_DeltaY_abs(:);
 
