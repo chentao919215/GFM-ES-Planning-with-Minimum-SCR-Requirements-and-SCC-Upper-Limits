@@ -51,7 +51,7 @@ end
 CONF.PN_GFL = max(CONF.PN_GFL_Node(CONF.u_GFL > 0.5));
 CONF.PN_GFL_pu_Node = CONF.PN_GFL_Node/CONF.Base_MVA;
 
-% 《ver_2》LVRT参数以各GFL-WG额定功率为基准，并同时保存
+% Manuscript Section II-C的LVRT参数以各GFL-WG额定功率为基准，并同时保存
 % 设备额定基准值与系统基准标幺值。
 CONF.KQ_GFL_Node = expand_built_node_parameter( ...
     GFL_Parameters.K_Q, GFL_Built_Nodes, CONF.Bn);
@@ -109,7 +109,7 @@ CONF.GFM_MaxModulesPerCandidate = GFM_Modules.Max_Modules_Per_Candidate;
 CONF.GFM_Module_Sequential = GFM_Modules.Enforce_Sequential_Build;
 CONF.GFM_Module_I_Post_Multiplier = GFM_Modules.I_Post_Multiplier;
 
-% 构造《ver_2》配置方案集合及固定的配置-模块状态映射。
+% 构造Manuscript式(25)的配置方案集合及固定配置-模块状态映射。
 GFM_Configuration = build_gfm_configuration_catalog(GFM_Modules);
 CONF.GFM_Config_Count = GFM_Configuration.Count;
 CONF.GFM_Config_Module_Matrix = GFM_Configuration.Module_Status;
@@ -249,7 +249,8 @@ CONF.Gen_Shutdown_Cost = expand_generator_parameter( ...
 
 validate_uc_parameters(CONF, T);
 
-%% 9. 计算文档口径下的GFM-ES模块年化投建成本
+%% 9. 计算Manuscript式(24)的GFM-ES模块年固定成本
+% 功率与能量单位成本均已包含年化投资和固定运维，此处各计一次。
 Power_Cost   = GFM_Modules.Annual_Cost_Power_per_MW;
 Energy_Cost  = GFM_Modules.Annual_Cost_Energy_per_MWh;
 Rated_Energy = GFM_Modules.Rated_Energy_MWh;
@@ -347,7 +348,7 @@ CONF_Public.GFM_Modules.Candidates.Module_Index = CONF.GFM_Module_Candidate_Inde
 CONF_Public.GFM_Modules.Candidates.Loc_Mat = CONF.GFM_Candidate_Loc_Mat;
 CONF_Public.GFM_Modules.Candidates.Module_Mat = CONF.GFM_Candidate_Module_Mat;
 
-% 年化投建成本及模块成本换算结果。
+% 年固定成本及模块成本换算结果。
 CONF_Public.GFM_Modules.Costs = struct();
 CONF_Public.GFM_Modules.Costs.Annual_Cost_Power_per_MW = ...
     GFM_Parameters.Costs.Annual_Cost_Power_per_MW;
@@ -542,6 +543,14 @@ if any(~isfinite(x_Res)) || any(x_Res <= 0) || ...
         any(~isfinite(x_Vir)) || any(x_Vir < 0) || ...
         any(x_Res+x_Vir <= 0)
     error('GFM-ES运行电抗必须为正，虚拟电抗必须为非负。');
+end
+I_Post_From_Impedance = 1./(x_Res+x_Vir);
+I_Post_From_Multiplier = I_Post_Multiplier.*PN_MW/CONF.Base_MVA;
+I_Post_Tolerance = 1e-9*max(1,max(abs(I_Post_From_Multiplier)));
+if any(~isfinite(I_Post_Multiplier)) || any(I_Post_Multiplier <= 0) || ...
+        any(abs(I_Post_From_Impedance-I_Post_From_Multiplier) > I_Post_Tolerance)
+    error(['GFM-ES故障后电流倍数与运行/虚拟电抗不一致：须满足', ...
+        '1/(X_GFM_Res+X_GFM_Vir)=I_Post_Multiplier*PN_MW/Base_MVA。']);
 end
 
 Candidate_Bus = Module_Parameters.Candidates.Bus(:);

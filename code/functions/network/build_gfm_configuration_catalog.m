@@ -1,6 +1,7 @@
 function CATALOG = build_gfm_configuration_catalog(GFM_Modules)
 %% 枚举满足投建规则的GFM-ES模块配置方案。
-% 配置目录属于离线参数集；优化模型通过lambda_c选择其中一行，
+% 配置目录属于Manuscript Section III-A, Eq. (25)的离线参数集；
+% 优化模型通过lambda_c选择其中一行，
 % 再将所选方案映射回各模块投建状态。
 
 M = GFM_Modules.Count;

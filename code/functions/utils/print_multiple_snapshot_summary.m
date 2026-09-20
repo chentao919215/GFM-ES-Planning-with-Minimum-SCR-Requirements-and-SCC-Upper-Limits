@@ -19,12 +19,27 @@ disp(Result.u_G_SCC);
 fprintf('u_G_SCR（各典型日内交集）：\n');
 disp(Result.u_G_SCR);
 
-fprintf('SCC_0（全同步机基准结果，kA；行=原始节点，列=典型日）：\n');
-disp(Result.SCC_0);
-fprintf('SCC_1（优化模型计算结果，kA；非安全网络保留节点为0）：\n');
+SCC_Nodes = Result.SafetyNetwork.SCCTimeResolvedOriginalNodes(:);
+SCR_Nodes = Result.SafetyNetwork.SCRTimeResolvedOriginalNodes(:);
+SCC_Hourly_Max = reshape(max(Result.SCC_TimeResolved,[],1), ...
+    Result.CONF.TypicalDayCount,numel(SCC_Nodes)).';
+SCR_Hourly_Min = reshape(min(Result.SCR_TimeResolved,[],1), ...
+    Result.CONF.TypicalDayCount,numel(SCR_Nodes)).';
+fprintf('SCC_1（聚合保守上界，kA；行=原始节点，列=典型日）：\n');
 disp(Result.SCC_1);
-fprintf('SCC_2（后验复算结果，kA；行=原始节点，列=典型日）：\n');
-disp(Result.SCC_2);
+fprintf('逐时SCC日内最大值（节点顺序%s，列=典型日）：\n',mat2str(SCC_Nodes.'));
+disp(SCC_Hourly_Max);
+fprintf('聚合SCR下界（GFL节点顺序%s，列=典型日）：\n',mat2str(SCR_Nodes.'));
+disp(Result.SCR(SCR_Nodes,:));
+fprintf('逐时SCR日内最小值（列=典型日）：\n');
+disp(SCR_Hourly_Min);
+fprintf(['聚合保守性：SCC最大违反量 %.6g kA（容差 %.6g），', ...
+    'SCR最大违反量 %.6g（容差 %.6g），通过=%d。\n'], ...
+    Result.SecurityValidation.SCC.MaximumViolation, ...
+    Result.SecurityValidation.SCC.Tolerance, ...
+    Result.SecurityValidation.SCR.MaximumViolation, ...
+    Result.SecurityValidation.SCR.Tolerance, ...
+    Result.SecurityValidation.Passed);
 
 fprintf('GFM-ES模块投建 u_GFM_Mod：1 = 投建，0 = 不投建。\n');
 disp(Result.u_GFM_Mod);
@@ -40,8 +55,10 @@ SOC_Value(~isfinite(SOC_Value)) = NaN;
 disp([min(SOC_Value,[],[2,3,4],'omitnan'), ...
     max(SOC_Value,[],[2,3,4],'omitnan')]);
 
-fprintf('YALMIP建模时间：%.3f s\n', Result.Diagnostics.yalmiptime);
+fprintf('YALMIP optimize调用开销：%.3f s\n', Result.Diagnostics.yalmiptime);
 fprintf('求解器时间：%.3f s\n', Result.Diagnostics.solvertime);
+fprintf('求解流程墙钟时间（含逐时安全后处理，不含保存）：%.3f s\n', ...
+    Result.solve_time);
 if Result.Diagnostics.has_incumbent
     fprintf('最佳界：%.6f，相对间隙：%.4f%%，节点数：%.0f。\n', ...
         Result.Diagnostics.best_bound, 100*Result.Diagnostics.mip_gap, ...

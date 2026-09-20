@@ -19,10 +19,12 @@ params.Network.Base_kA  = params.Network.Base_MVA / ...
     params.Network.Base_kV / sqrt(3);
 params.Network.Base_O   = params.Network.Base_kV^2 / ...
     params.Network.Base_MVA;
+% Manuscript Section IV-A仅将线路串联电纳缩放为4/7；等价地将x乘7/4。
+% 线路电阻与并联电纳保持原始case30数据，且不进入无损安全网络。
 params.Network.Branch_Scale = struct( ...
-    'r', 7/4, ...
+    'r', 1, ...
     'x', 7/4, ...
-    'b', 4/7);
+    'b', 1);
 % Xd_Gen先按设备基准输入，再换算为系统基准。
 x_Gen_Device = 0.10 * ones(size(mpc.gen, 1), 1);
 params.Network.Xd_Gen = x_Gen_Device .* params.Network.Base_MVA ./ ...
@@ -32,7 +34,7 @@ params.Network.Gen_Cost_Breakpoints = 0:0.1:1;
 %% 2. GFL_WG
 % 已建GFL-WG场站及其LVRT、电流和弃风成本参数。
 params.GFL_WG = struct();
-params.GFL_WG.Built_Nodes = [11, 18];
+params.GFL_WG.Built_Nodes = 11;
 params.GFL_WG.PN_MW = 60;
 params.GFL_WG.Curtailment_Cost_per_MWh = 30;
 params.GFL_WG.K_Q = 1.5;
@@ -61,8 +63,9 @@ params.GFM_Modules.Module.Module_Index = [1, 2, 1, 2, 1, 2];
 params.GFM_Modules.Module.PN_MW = [30, 30, 30, 30, 30, 30];
 
 params.GFM_Modules.Costs = struct();
+% Manuscript Section IV-A：以下两项均为包含年化投资和固定运维的年固定成本。
 params.GFM_Modules.Costs.Annual_Cost_Power_per_MW = ...
-    [9600, 9600, 9600, 9600, 9600, 9600];
+    [12390, 12390, 12390, 12390, 12390, 12390];
 params.GFM_Modules.Costs.Annual_Cost_Energy_per_MWh = ...
     [37120, 37120, 37120, 37120, 37120, 37120];
 
@@ -90,7 +93,7 @@ params.GFM_Modules.Electrical.X_GFM_Res = ...
 %% 4. Security
 % 短路电流上限、SCR下限及源在线约束。
 params.Security = struct();
-params.Security.I_limit_kA = 12.25;
+params.Security.I_limit_kA = 6.25; % kA
 params.Security.SCR_min = 3;
 params.Security.Require_Source_Online = true;
 

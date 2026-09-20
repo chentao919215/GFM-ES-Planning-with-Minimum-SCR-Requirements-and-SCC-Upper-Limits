@@ -161,16 +161,33 @@ code/scripts/system/start_multiple_snapshot_planning_longrun.m
 - 四个典型日的场景概率分别为 `[0.2581,0.2258,0.2581,0.2581]`、`[0.0658,0.2763,0.1842,0.4737]`、`[0.6250,0.1705,0.1023,0.1023]` 和 `[0.4882,0.2118,0.1824,0.1176]`；
 - 负荷曲线、日前风电曲线、风电场景和场景概率来自指定 RTS-GMLC 处理结果，风电场景生成模式为 `explicit`；
 - 实际场景集合不存在自然的“基准场景”，因此 `Base_Index=NaN`；单场景绘图或导出时必须显式指定 `Scenario_Index=1..4`，期望量仍按逐典型日场景概率计算；
-- GFL-WG 建于 11、18 号节点，单场额定功率 60 MW，弃风成本为 30（模型成本单位）/MWh；
+- GFL-WG 仅建于 11 号节点，单场额定功率 60 MW，弃风成本为 30（模型成本单位）/MWh；
 - GFM-ES 候选节点为 9、15 和 19 号节点；每个候选节点最多配置 2 个模块，全系统最多投建 4 个模块；
 - 每个 GFM-ES 模块额定功率 30 MW、额定能量 60 MWh，充放电效率均为 0.9，SOC 上限、初始值和下限分别为 0.9、0.5 和 0.1；
 - 同步机与 GFM-ES 的设备基准电抗均按 0.10 p.u. 输入后换算至系统基准，GFM-ES 故障后电流倍数为 1.5；
-- 线路参数修正比例为 `r=x=7/4、b=4/7`，短路电流上限为 12.25 kA，经典 SCR 下限为 3；
+- 线路串联电纳按 `4/7` 缩放（等价于 `x=7/4`），`r` 与 `b` 保持原始 case30 数据；安全网络另按无损感性近似忽略 `r` 与 `b`；
+- 短路电流上限为 12.25 kA（系统基准下 28.64 p.u.），经典 SCR 下限为 3；GFM-ES 年固定成本采用 12390 $/(MW·year) 与 37120 $/(MWh·year)，各自均已包含年化投资和固定运维且只计一次；
 - 六台同步机最小出力为 `[20,20,10,11,6,8]` MW，上爬坡率为 `[20,20,10,11,6,8]` MW/h，下爬坡率为 `[24,24,18,20,12,14]` MW/h；
 - 六台同步机最小开机时段为 `[4,4,4,4,2,4]`，最小停机时段为 `[4,4,2,2,2,2]`；启动成本按满载发电成本的 0.5 倍计算，停机成本按 0.05 倍计算；
 - 两阶段求解的第一阶段时限为 300 s、目标间隙为 30%，第二阶段时限为 1800 s、目标间隙为 0.5%。
 
 以上设置用于复现指定算例。来源明确的参数按算例文档或配套文献设置；网络强度、设备成本、额定容量、故障电流能力、安全阈值等缺少唯一通用取值或可能显著影响规划结果的参数，应在研究中列为灵敏度分析对象。
+
+## 2026-09 Result 输出精简与逐时安全后验复算
+
+本轮结果整理与论文中的聚合安全定义保持一致，并补充了基于最终规划决策的逐时后验安全指标：
+
+- `Result.SCC_1` 保留为典型日同步机并集工况下的聚合 SCC 保守上界；它不代表实际逐时 SCC；
+- `Result.SCR` 保留为典型日同步机交集工况下的聚合经典 SCR 下界；它不代表实际逐时 SCR；
+- 新增 `Result.SCC_TimeResolved`，概念维度为 `[period, typical_day, scc_security_node]`，单位为 kA；
+- 新增 `Result.SCR_TimeResolved`，概念维度为 `[period, typical_day, gfl_node]`，为无量纲经典 SCR；
+- 逐时后验使用最终 GFM-ES 投建状态和实际 `u_G(generator, typical_day, period)`，独立于 SCC/SCR 约束辅助变量；
+- 逐时 SCC/SCR 的原始节点映射记录在 `Result.SafetyNetwork`、`Result.SCC_Definition` 和 `Result.SCR_Definition` 中；
+- `Result.SecurityValidation` 记录聚合 SCC 上界与逐时 SCC 最大值、聚合 SCR 下界与逐时 SCR 最小值的数值容差、最大违反量及位置。
+
+Result 中已删除确认重复或仅用于模型构建的缓存字段，包括 `SCC_0`、`SCC_2`、顶层 GFM 配置状态、顶层 `u_GFL`、顶层风电场景描述和 `SolveStage`，以及离线状态枚举、LVRT 中间变量和故障转移缓存。对应权威配置保留在 `Result.CONF` 或 `Result.Diagnostics.ConfigurationAllowed` 中；`lambda_c` 保留最终配置选择结果。保存的 `Result.solve_time` 是从进入单次求解到完成结果提取和逐时后处理的墙钟时间，不含打包与文件保存；`Result.Diagnostics.solvertime` 是求解器内部时间，`yalmiptime` 是 `optimize` 调用开销。
+
+固定状态安全网络重构位于 `code/functions/network/build_fixed_state_safety_network.m`；SCC/SCR 指标计算和聚合保守性检查位于 `code/functions/security/`。SCC 后验继续沿用无损安全网络、故障节点局部虚拟阻抗和三段 LVRT 增量电流逻辑；SCR 后验直接复用 `calculate_classic_scr.m`，不另设 SCR 定义。
 
 ## 核心文件
 
@@ -180,26 +197,33 @@ code/functions/security/add_impedance_reconstruction_constraints.m
 code/functions/security/add_short_circuit_current_constraints.m
 code/functions/security/add_classic_scr_constraints.m
 code/functions/network/calculate_impedance_bounds.m
+code/functions/network/build_fixed_state_safety_network.m
+code/functions/security/calculate_fixed_state_scc.m
+code/functions/security/calculate_fixed_state_scr.m
+code/functions/security/calculate_time_resolved_security_metrics.m
+code/functions/security/check_aggregated_security_conservatism.m
 code/functions/io/load_multiple_snapshot_case.m
+code/functions/io/package_multiple_snapshot_result.m
 code/functions/equipment/configure_simulink_file_generation.m
 code/functions/equipment/configure_simulink_file_generation_from_model.m
 ```
 
-多时段主模型在每个典型日内使用同步机逐时状态的并集重构最大短路电流工况，使用状态交集重构最弱SCR工况。两类安全网络均不随风电场景复制。该聚合方式能控制模型规模，但相较逐时重构更保守，后续可进一步研究逐时安全约束或更紧的等价表达。
+多时段主模型在每个典型日内使用同步机逐时状态的并集重构最大短路电流工况，使用状态交集重构最弱 SCR 工况。两类聚合安全网络均不随风电场景复制；逐时 SCC/SCR 仅在求解完成后按实际 SG 状态重构，不把聚合结果填充到逐时数组。该聚合方式能控制模型规模，但相较逐时安全约束更保守。
 
 ## 结果与复核
 
 求解结果默认写入 `results/`。该目录及Gurobi日志、MATLAB结果文件均不纳入Git版本控制。建议至少检查：
 
 - `Diagnostics.problem`、最优间隙和是否存在可行整数解；
-- `u_GFM_Mod`、`u_G_SCC`与`u_G_SCR`；
+- `u_GFM_Mod`、`lambda_c`、`u_G`、`u_G_Start` 与 `u_G_Stop`；
 - 场景名称、概率及 `[元件,典型日,场景,时段]` 运行结果维度；
-- `u_G`、`u_G_Start`与`u_G_Stop`的循环状态转换、爬坡及最小开停机时间；
 - 各场景节点功率平衡、线路限额和机组出力边界；
 - 各场景GFM-ES充放电互斥、SOC范围及典型日末SOC；
 - GFL-WG场景可用出力、额定功率、实际出力和弃风功率之间的关系；
-- 最大短路电流和最小SCR的安全裕度；
-- 保存的阻抗矩阵与最终整数状态直接求逆结果是否一致。
+- `SCC_1` 与逐时 `SCC_TimeResolved` 的安全裕度及聚合保守性；
+- 聚合 `SCR` 与逐时 `SCR_TimeResolved` 的安全裕度及聚合保守性；
+- 保存的聚合阻抗矩阵与最终整数状态直接重构结果是否一致；
+- `solve_time`、`Diagnostics.solvertime` 和 `Diagnostics.yalmiptime` 的计时含义。
 
 当前显式历史场景没有自然基准场景。需要单场景复核时，应明确选用的场景编号并将其概率设为 1，再使用确定性退化检查函数验证输入轨迹、运行权重及结果；不应把任意历史场景静默解释为基准场景。
 

@@ -50,7 +50,8 @@ NET.P_GFL_Available_Scenarios    = CONF.P_GFL_Available_Scenarios;
 NET.Wind_Scenario_Probabilities    = CONF.WindScenarioProbabilities;
 NET.Operating_Weights_Hours       = CONF.OperatingWeights_Hours;
 
-%% 3. 生成节点导纳矩阵
+%% 3. 生成正常网络节点导纳矩阵
+% 本矩阵保留线路串联电阻和并联电纳，不用于Manuscript的安全网络。
 fb = mpc.branch(:,1);
 tb = mpc.branch(:,2);
 r  = mpc.branch(:,3);
@@ -72,6 +73,16 @@ Y_SG_Node   = NET.Generator_Location_Matrix*Y_SG_Unit;
 NET.Y_SG_Add = sparse(1:N,1:N,Y_SG_Node,N,N);
 
 %% 4. 构造Kron降阶安全网络
+% Manuscript Section II-B, Eq. (3): B_0=Im[Y_0]。安全网络采用无损
+% 感性近似，在Kron消元前忽略线路串联电阻和并联电纳。
+Y_Series_Safety = 1./(1i*x);
+Y_Safety_Ff = sparse(fb,fb,Y_Series_Safety,N,N);
+Y_Safety_Tt = sparse(tb,tb,Y_Series_Safety,N,N);
+Y_Safety_Ft = sparse(fb,tb,-Y_Series_Safety,N,N);
+Y_Safety_Tf = sparse(tb,fb,-Y_Series_Safety,N,N);
+NET.Y_0_Safety_Full = Y_Safety_Ff+Y_Safety_Tt+Y_Safety_Ft+Y_Safety_Tf;
+NET.B_0_Safety_Full = imag(NET.Y_0_Safety_Full);
+
 % SCC与SCR工况共用同一保留节点集合和原节点-降阶节点映射。
 Safety_Nodes = CONF.Safety_Retained_Nodes(:);
 Eliminated_Nodes = setdiff((1:N).',Safety_Nodes,'stable');
@@ -89,7 +100,9 @@ NET.Safety_GFL_Count = CONF.Safety_GFL_Count;
 NET.Safety_Generator_Location_Matrix = NET.Generator_Location_Matrix(Safety_Nodes,:);
 NET.Safety_GFM_Module_Location_Matrix = ...
     CONF.GFM_Module_Loc_Mat(Safety_Nodes,:);
-NET.Y_0_Safety = local_kron_reduce(NET.Y_0,Safety_Nodes,Eliminated_Nodes);
+NET.Y_0_Safety = local_kron_reduce( ...
+    NET.Y_0_Safety_Full,Safety_Nodes,Eliminated_Nodes);
+NET.B_0_Safety = imag(NET.Y_0_Safety);
 
 Y_SG_Node_Safety = NET.Safety_Generator_Location_Matrix*Y_SG_Unit;
 NET.Y_SG_Add_Safety = sparse(1:NS,1:NS,Y_SG_Node_Safety,NS,NS);

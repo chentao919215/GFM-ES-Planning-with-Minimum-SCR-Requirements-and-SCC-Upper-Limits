@@ -107,16 +107,16 @@ end
 end
 
 function set_if_present(Parent_Name, Block_Name, Parameter_Pairs)
-Block_Path = [Parent_Name '/' blockName];
-if isempty(find_system(parentName,'SearchDepth',1,'Type','Block','Name',Block_Name))
+Block_Path = [Parent_Name '/' Block_Name];
+if isempty(find_system(Parent_Name,'SearchDepth',1,'Type','Block','Name',Block_Name))
     return;
 end
 set_param(Block_Path,Parameter_Pairs{:});
 end
 
 function add_to_workspace(Parent_Name, Source_Block, Source_Port, Variable_Name, position)
-Block_Path = [Parent_Name '/' variableName];
-if ~isempty(find_system(parentName,'SearchDepth',1,'Type','Block', ...
+Block_Path = [Parent_Name '/' Variable_Name];
+if ~isempty(find_system(Parent_Name,'SearchDepth',1,'Type','Block', ...
         'Name',Variable_Name))
     return;
 end

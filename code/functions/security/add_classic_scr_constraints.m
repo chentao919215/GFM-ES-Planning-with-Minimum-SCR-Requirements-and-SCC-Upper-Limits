@@ -2,6 +2,7 @@ function C_SCR = add_classic_scr_constraints(CONF, u_GFL, X_Diag, PN_PU)
 %% 本函数功能是构造已建GFL节点的经典短路比下限约束。
 % 经典SCR约束只作用于已建GFL节点。
 % X_diag为节点自阻抗虚部对角元素，PN_pu为变流器额定容量标幺值。
+% 对应Manuscript Section II-D, Eq. (23)及Appendix-A。
 
 CONF = normalize_multiple_snapshot_conf(CONF);
 

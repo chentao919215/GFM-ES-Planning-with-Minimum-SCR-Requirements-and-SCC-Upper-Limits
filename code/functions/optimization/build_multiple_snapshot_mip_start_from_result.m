@@ -98,5 +98,12 @@ error('源结果含%d个风电场景，无法映射到%d个风电场景。', ...
 end
 
 function Stage_Name = get_result_stage(Result)
-Stage_Name = Result.SolveStage;
+if isfield(Result,'CONF') && isfield(Result.CONF,'SolveStage')
+    Stage_Name = Result.CONF.SolveStage;
+elseif isfield(Result,'SolveStage')
+    % Backward compatibility for results written before the compact schema.
+    Stage_Name = Result.SolveStage;
+else
+    Stage_Name = 'single-stage';
+end
 end

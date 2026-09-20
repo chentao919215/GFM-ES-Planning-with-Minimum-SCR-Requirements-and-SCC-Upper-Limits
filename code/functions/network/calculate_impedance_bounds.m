@@ -1,12 +1,13 @@
 function Z_Bounds = calculate_impedance_bounds(NET, CONF)
-%% 枚举《ver_2》配置方案与同步机状态并计算阻抗上下界。
-% SCC采用典型日内同步机并集状态，故障转移网络采用该并集的逐时子状态；
-% SCR采用典型日内同步机交集状态。不可逆组合写入目录并在优化中禁止出现。
+%% 枚举Manuscript配置方案与同步机状态并计算电抗上下界。
+% Section II-B/C, Eqs. (3)-(7) and (17): SCC采用典型日内同步机并集状态，
+% 故障转移网络采用该并集的逐时子状态；SCR采用典型日内同步机交集状态。
+% 奇异或不满足非负电抗条件的组合写入目录并在优化中禁止出现。
 
 CONF = normalize_multiple_snapshot_conf(CONF);
 
-if ~isfield(NET, 'Y_0_Safety') || ~isfield(CONF, 'GFM_Config_Module_Matrix')
-    error('《ver_2》阻抗预处理需要安全网络与GFM-ES配置方案目录。');
+if ~isfield(NET, 'B_0_Safety') || ~isfield(CONF, 'GFM_Config_Module_Matrix')
+    error('Manuscript阻抗预处理需要安全电纳矩阵与GFM-ES配置方案目录。');
 end
 
 NS = NET.Safety_N;
@@ -18,8 +19,8 @@ C = size(Configuration_Status,1);
 
 SG_States = local_build_binary_states(G);
 State_Count = size(SG_States,1);
-Y_SG_Unit = 1./(1i*CONF.Xd_Gen(:));
-Y_GFM_Unit = 1./(1i*CONF.GFM_Module_X_Res(:));
+B_SG_Unit = -1./CONF.Xd_Gen(:);
+B_GFM_Unit = -1./CONF.GFM_Module_X_Res(:);
 
 SCC_Extrema = local_initialize_extrema(NS,NS);
 SCR_Extrema = local_initialize_extrema(NS,NGFL);
@@ -34,7 +35,7 @@ Configuration_Has_Valid_SCR_State = false(C,1);
 
 for c = 1:C
     GFM_Status = Configuration_Status(c,:).';
-    Y_GFM_Diag = NET.Safety_GFM_Module_Location_Matrix*(GFM_Status.*Y_GFM_Unit);
+    B_GFM_Diag = NET.Safety_GFM_Module_Location_Matrix*(GFM_Status.*B_GFM_Unit);
 
     % SCR交集状态不一定对应实际时段，因此独立枚举全部配置-交集状态组合。
     for SCR_Index = 1:State_Count
@@ -43,14 +44,14 @@ for c = 1:C
             Invalid_SCR_States(end+1,:) = [c,SCR_Index]; %#ok<AGROW>
             continue;
         end
-        Y_SCR = NET.Y_0_Safety + spdiags( ...
-            NET.Safety_Generator_Location_Matrix*(u_SCR.*Y_SG_Unit)+Y_GFM_Diag,0,NS,NS);
-        [Z_SCR, SCR_Ok] = local_inverse(Y_SCR);
-        if SCR_Ok && local_valid_transfer_impedances(Z_SCR,Z_SCR)
+        B_SCR = NET.B_0_Safety + spdiags( ...
+            NET.Safety_Generator_Location_Matrix*(u_SCR.*B_SG_Unit)+B_GFM_Diag,0,NS,NS);
+        [X_SCR, SCR_Ok] = local_reactance(B_SCR);
+        if SCR_Ok && local_valid_transfer_reactances(X_SCR,X_SCR)
             Valid_SCR_States(end+1,:) = [c,SCR_Index]; %#ok<AGROW>
             Configuration_Has_Valid_SCR_State(c) = true;
             SCR_Extrema = local_update_extrema( ...
-                SCR_Extrema,CONF.KZ*Z_SCR(:,GFL_Columns));
+                SCR_Extrema,1i*CONF.KZ*X_SCR(:,GFL_Columns));
         else
             Invalid_SCR_States(end+1,:) = [c,SCR_Index]; %#ok<AGROW>
         end
@@ -60,11 +61,11 @@ for c = 1:C
         u_Union = SG_States(Union_Index,:).';
         if ~local_source_online(u_Union,GFM_Status,CONF.Require_Source_Online)
             SCC_Ok = false;
-            Z_SCC = [];
+            X_SCC = [];
         else
-            Y_SCC = NET.Y_0_Safety + spdiags( ...
-                NET.Safety_Generator_Location_Matrix*(u_Union.*Y_SG_Unit)+Y_GFM_Diag,0,NS,NS);
-            [Z_SCC,SCC_Ok] = local_inverse(Y_SCC);
+            B_SCC = NET.B_0_Safety + spdiags( ...
+                NET.Safety_Generator_Location_Matrix*(u_Union.*B_SG_Unit)+B_GFM_Diag,0,NS,NS);
+            [X_SCC,SCC_Ok] = local_reactance(B_SCC);
         end
 
         for Actual_Index = 1:State_Count
@@ -79,10 +80,10 @@ for c = 1:C
                 continue;
             end
 
-            Y_Fault = NET.Y_0_Safety + spdiags( ...
-                NET.Safety_Generator_Location_Matrix*(u_Actual.*Y_SG_Unit)+Y_GFM_Diag,0,NS,NS);
-            [Z_Fault,Fault_Ok] = local_inverse(Y_Fault);
-            if ~Fault_Ok || ~local_valid_transfer_impedances(Z_SCC,Z_Fault)
+            B_Actual = NET.B_0_Safety + spdiags( ...
+                NET.Safety_Generator_Location_Matrix*(u_Actual.*B_SG_Unit)+B_GFM_Diag,0,NS,NS);
+            [X_Actual,Actual_Ok] = local_reactance(B_Actual);
+            if ~Actual_Ok || ~local_valid_transfer_reactances(X_SCC,X_Actual)
                 Invalid_Pairs(end+1,:) = [c,Union_Index,Actual_Index]; %#ok<AGROW>
                 continue;
             end
@@ -90,17 +91,16 @@ for c = 1:C
             Valid_Pairs(end+1,:) = [c,Union_Index,Actual_Index]; %#ok<AGROW>
             Configuration_Has_Valid_Pair(c) = true;
 
-            Z_SCC_Scaled = CONF.KZ*Z_SCC;
+            Z_SCC_Scaled = 1i*CONF.KZ*X_SCC;
             SCC_Extrema = local_update_extrema(SCC_Extrema,Z_SCC_Scaled);
 
-            % tau(c,n,p)为X_SCC(nn)*|Z_fault(np)/Z_fault(nn)|的KZ缩放值。
-            x_SCC = imag(diag(Z_SCC));
+            % Manuscript Eq. (17): tau(c,n,p)为并集自电抗乘以实际状态
+            % 转移电抗比的配置相关上界；此处按KZ同步缩放。
             for n = 1:NS
                 for GFL_Index = 1:NGFL
                     p = GFL_Columns(GFL_Index);
-
-                    transfer_ratio = abs(Z_Fault(n,p) / Z_Fault(n,n));
-                    candidate = CONF.KZ * x_SCC(n) * transfer_ratio;
+                    transfer_ratio = X_Actual(n,p) / X_Actual(n,n);
+                    candidate = CONF.KZ*X_SCC(n,n)*transfer_ratio;
 
                     Tau_Scaled(c,n,GFL_Index) = ...
                         max(Tau_Scaled(c,n,GFL_Index), candidate);
@@ -112,10 +112,10 @@ for c = 1:C
 end
 
 if ~any(Configuration_Has_Valid_Pair)
-    error('未找到可逆的《ver_2》SCC配置-状态组合。');
+    error('未找到满足Manuscript安全网络条件的SCC配置-状态组合。');
 end
 if ~any(Configuration_Has_Valid_SCR_State)
-    error('未找到可逆的《ver_2》SCR配置-交集状态组合。');
+    error('未找到满足Manuscript安全网络条件的SCR配置-交集状态组合。');
 end
 
 % 可选配置必须同时存在有效SCC状态对、有效SCR交集状态，并具有完整tau上界。
@@ -161,26 +161,30 @@ function tf = local_source_online(u_SG,u_GFM,Require_Source)
 tf = ~Require_Source || any(u_SG) || any(u_GFM);
 end
 
-function [Z,Is_Invertible] = local_inverse(Y)
-Y_Full = full(Y);
-if any(~isfinite(Y_Full(:))) || rcond(Y_Full) < 1e-10
-    Z = [];
+function [X,Is_Invertible] = local_reactance(B)
+B_Full = full(B);
+if any(~isfinite(B_Full(:))) || rcond(B_Full) < 1e-10
+    X = [];
     Is_Invertible = false;
     return;
 end
-Z = Y_Full\eye(size(Y_Full));
-Is_Invertible = all(isfinite(Z(:)));
+X = -(B_Full\eye(size(B_Full)));
+Is_Invertible = all(isfinite(X(:)));
 end
 
-function tf = local_valid_transfer_impedances(Z_SCC,Z_Fault)
-if isempty(Z_SCC) || isempty(Z_Fault)
+function tf = local_valid_transfer_reactances(X_SCC,X_Actual)
+if isempty(X_SCC) || isempty(X_Actual)
     tf = false;
     return;
 end
-x_SCC = imag(diag(Z_SCC));
-x_Fault = imag(diag(Z_Fault));
-tf = all(isfinite(x_SCC)) && all(isfinite(x_Fault)) && ...
-    all(x_SCC > 1e-10) && all(x_Fault > 1e-10);
+x_SCC_Diag = diag(X_SCC);
+x_Actual_Diag = diag(X_Actual);
+Entry_Tolerance = 1e-10;
+tf = all(isfinite(X_SCC(:))) && all(isfinite(X_Actual(:))) && ...
+    all(x_SCC_Diag > Entry_Tolerance) && ...
+    all(x_Actual_Diag > Entry_Tolerance) && ...
+    all(X_SCC(:) >= -Entry_Tolerance) && ...
+    all(X_Actual(:) >= -Entry_Tolerance);
 end
 
 function extrema = local_initialize_extrema(n_Rows,n_Columns)

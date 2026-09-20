@@ -1,7 +1,7 @@
 function [C_LVRT, C_McCormick] = add_gfl_lvrt_residual_constraints( ...
     NET, CONF, u_SG_SCR, u_GFM_Module, V_F, V0, Vlin, Vsat, ...
     D0, Dlin, Dsat, Delta_I, Zeta_SG, Zeta_GFM)
-%% 构造《ver_2》三段式LVRT与交集工况残余电压反馈约束。
+%% 构造Manuscript三段式LVRT与交集状态残余电压反馈约束。
 % 本函数中的节点维度均采用Kron降阶后的安全网络维度。
 
 CONF = normalize_multiple_snapshot_conf(CONF);
@@ -29,11 +29,13 @@ if size(Zeta_GFM,1) ~= M || size(Zeta_GFM,2) ~= NS || ...
     error('GFM-ES LVRT McCormick变量维度不一致。');
 end
 
-B0 = -imag(NET.Y_0_Safety);
+% Manuscript Eq. (18)整体乘以-1后采用M_0=-B_0，便于直接使用
+% 非负源电纳幅值；该变换不改变残余电压或LVRT电流的数学含义。
+B0 = -NET.B_0_Safety;
 b_SG = -imag(1./(1i*CONF.Xd_Gen(:)));
 b_GFM = 1./CONF.GFM_Module_X_Res(:);
 
-% 文档2.4.3 GFL-WG故障电压与LVRT增量电流约束，式(1.52)-(1.69)。
+% Manuscript Eqs. (13)-(19)与Appendix-B：三段式LVRT及交集状态残压。
 C_LVRT = [V_F(:) >= 0, V_F(:) <= 1, ...
     Delta_I >= 0, Delta_I <= repmat( ...
     CONF.Delta_I_GFL_pu_Node(NET.Safety_Retained_Nodes(GFL_Reduced)).',NS,1,D)];
@@ -43,13 +45,13 @@ for d = 1:D
     C_LVRT = [C_LVRT, diag(V_F(:,:,d)) == 0]; %#ok<AGROW>
 
     for p = 1:NS
-        % 文档2.5 McCormick线性化约束，式(1.88)：同步机状态与残余电压乘积。
+        % Manuscript Eq. (18)：同步机交集状态与残余电压的McCormick乘积。
         U_SG = repmat(u_SG_SCR(:,d),1,NS);
         X_SG = repmat(V_F(:,p,d).',G,1);
         C_McCormick = [C_McCormick, add_binary_product_bounds( ...
             Zeta_SG(:,:,p,d),X_SG,U_SG,zeros(G,NS),ones(G,NS))]; %#ok<AGROW>
 
-        % 文档2.5 McCormick线性化约束，式(1.88)：GFM-ES状态与残余电压乘积。
+        % Manuscript Eq. (18)：GFM-ES投建状态与残余电压的McCormick乘积。
         U_GFM = repmat(u_GFM_Module,1,NS);
         X_GFM = repmat(V_F(:,p,d).',M,1);
         C_McCormick = [C_McCormick, add_binary_product_bounds( ...
@@ -95,8 +97,8 @@ for d = 1:D
                         Dsat(n,GFL_Index,d), ...
                     V_F(n,p,d) == ...
                         V0(n,GFL_Index,d)+Vlin(n,GFL_Index,d)+Vsat(n,GFL_Index,d)]; %#ok<AGROW>
-                % 保持式(1.61)至式(1.62)的符号约定：DeltaI_GFL作为
-                % 残余电压平衡方程右端的正标量电流项。
+                % 对Manuscript Eq. (18)整体乘以-1后，DeltaI_GFL作为
+                % 等价正定残余电压方程右端的正标量电流项。
                 rhs = Delta_i;
             else
                 rhs = 0;

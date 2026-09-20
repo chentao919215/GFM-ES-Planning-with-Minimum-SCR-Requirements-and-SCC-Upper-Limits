@@ -3,7 +3,8 @@ function [SCC_0,SCC_1,SCC_2,Value_P_Line,Value_Theta,Value_P_G,Value_P_GFL,Value
     Value_Cost_CON,Value_Cost_GEN,Value_Cost_Total,Diagnostics,...
     Value_u_GFM_Module,Value_P_GFM_Dis,Value_P_GFM_Ch,Value_E_GFM,...
     Value_u_GFM_Ch,Value_P_GFL_Curt,Value_Cost_Curt,...
-    Value_u_G_Start,Value_u_G_Stop,Value_Cost_UC] = ...
+    Value_u_G_Start,Value_u_G_Stop,Value_Cost_UC, ...
+    SCC_TimeResolved,SCR_TimeResolved,SecurityValidation] = ...
     solve_multiple_snapshot_planning(mpc,CONF)
 %% 构建并求解场景随机多时段模块化GFM-ES配置优化模型
 % GFM-ES投建和同步机组合状态跨风电场景共享，其余运行变量按场景补救。
@@ -44,13 +45,13 @@ Active_Module_Mask = false(N_GFM, N_GFM_Module);
 Active_Module_Mask(Module_Linear_Index) = true;
 
 % 元件-节点关联矩阵。
-Generator_Location_Matrix        = NET.Generator_Location_Matrix;
+Generator_Location_Matrix  = NET.Generator_Location_Matrix;
 GFM_Candidate_Location_Mat = CONF.GFM_Candidate_Loc_Mat;
-GFM_Candidate_Module_Mat = CONF.GFM_Candidate_Module_Mat;
-Branch_From        = NET.Branch_From;
-Branch_To          = NET.Branch_To;
-Branch_Matrix_From    = NET.Branch_Matrix_From;
-Branch_Matrix_To      = NET.Branch_Matrix_To;
+GFM_Candidate_Module_Mat   = CONF.GFM_Candidate_Module_Mat;
+Branch_From                = NET.Branch_From;
+Branch_To                  = NET.Branch_To;
+Branch_Matrix_From         = NET.Branch_Matrix_From;
+Branch_Matrix_To           = NET.Branch_Matrix_To;
 
 % 同步机发电成本与出力上下限参数。
 Generator_Cost_Quadratic  = NET.Generator_Cost_Quadratic;
@@ -88,7 +89,7 @@ GFM_SOC_Max              = CONF.GFM_Candidate_SOC_Max(:);
 GFM_SOC_Initial          = CONF.GFM_Candidate_SOC_Initial(:);
 GFM_SOC_Min              = CONF.GFM_Candidate_SOC_Min(:);
 
-% 阻抗矩阵元素上下界用于McCormick线性化。
+% Manuscript Section II-B：离线电抗元素上下界用于精确McCormick线性化。
 Z_Bounds = calculate_impedance_bounds(NET, CONF);
 
 %% 3. 定义优化变量
@@ -122,14 +123,14 @@ P_SG_Norm  = sdpvar(G,D,K,T,'full');
 theta      = sdpvar(N,D,K,T,'full');
 P_Line     = sdpvar(L,D,K,T,'full');
 
-% 各典型日分别重构安全阻抗；SCC构造完整矩阵，SCR仅构造GFL-WG节点列。
-% SCC采用三维full变量并在约束中逐典型日显式施加对称性。
+% 各典型日分别重构安全电抗所需列；SCC需要全部安全节点列，数值上形成
+% 完整矩阵，SCR仅需要GFL-WG节点列。SCC逐典型日显式施加对称性。
 Z_SCC_Real = sdpvar(NS,NS,D,'full');
 Z_SCC_Imag = sdpvar(NS,NS,D,'full');
 Z_SCR_Real = sdpvar(NS,NGFL,D,'full');
 Z_SCR_Imag = sdpvar(NS,NGFL,D,'full');
 
-% 《ver_2》同步机交集工况的残余电压与LVRT反馈变量。
+% Manuscript Section II-C同步机交集工况的残余电压与LVRT反馈变量。
 V_F       = sdpvar(NS,NS,D,'full');
 V_F_0     = sdpvar(NS,NGFL,D,'full');
 V_F_Lin   = sdpvar(NS,NGFL,D,'full');
@@ -159,9 +160,8 @@ W_GFMZ_R_SCR = sdpvar(M_GFM,NGFL,D,'full');
 Cost_SG = sdpvar(G,D,K,T,'full');
 
 %% 4. 建立约束
-%% 4.1 规划约束(文档2.1，式(1.9)-(1.14))
-% 式(1.9)的二元变量已在前文声明；式(1.10)-(1.12)对应离线配置枚举。
-% 以下约束完成模块投建上限、配置选择及式(1.13)-(1.14)的配置映射。
+%% 4.1 规划约束(Manuscript Section III-A，式(25))
+% 可行模块配置离线枚举；以下在线约束选择唯一配置并映射模块投建状态。
 C_Plan = [];
 C_Plan = [C_Plan, u_GFM_Module(~Active_Module_Mask) == 0];
 C_Plan = [C_Plan, sum(u_GFM_Module_Table) <= CONF.N_GFM_Module_Max];
@@ -170,7 +170,7 @@ C_Plan = [C_Plan, sum(Lambda_Configuration) == 1, ...
     Lambda_Configuration(~Configuration_Allowed) == 0, ...
     u_GFM_Module_Table == CONF.GFM_Config_Module_Matrix.'*Lambda_Configuration];
 
-% 文档2.1规划约束，式(1.13)-(1.14)：投建状态对应的节点聚合参数。
+% Manuscript未单列：由式(25)所选模块状态聚合节点功率、能量与模块数。
 P_GFM_Installed = GFM_Candidate_Module_Mat* ...
     (GFM_Module_PN.*u_GFM_Module_Table);
 E_GFM_Installed = GFM_Candidate_Module_Mat* ...
@@ -193,7 +193,7 @@ if CONF.GFM_Module_Sequential
     end
 end
 
-%% 4.2 基础潮流约束(文档2.2，式(1.15)-(1.22))
+%% 4.2 基础潮流约束(Manuscript Section III-B，式(26)-(27))
 C_Power_Flow = [];
 Ref_Bus_Index = (mpc.bus(:,2) == 3);
 Generator_P_Range = Generator_P_Max - Generator_P_Min;
@@ -213,25 +213,25 @@ for d = 1:D
             Theta_d_k_t = theta(:,d,k,t);
             P_Line_d_k_t = P_Line(:,d,k,t);
 
-            % 文档2.2基础潮流约束，式(1.15)：节点有功功率平衡。
+            % Manuscript Section III-B，式(26)：节点有功功率平衡。
             P_SG_Node_d_k_t = Generator_Location_Matrix*P_SG_d_k_t;
             P_Inj_d_k_t = P_SG_Node_d_k_t + P_GFL_d_k_t + P_GFM_d_k_t - P_Load(:,d,t);
             C_Power_Flow = [C_Power_Flow, P_Inj_d_k_t == ...
                 Branch_Matrix_From*P_Line_d_k_t - Branch_Matrix_To*P_Line_d_k_t];
 
-            % 文档2.2基础潮流约束，式(1.16)：同步机出力上下限。
-            % 归一化关系同时对应文档式(1.5)-(1.6)的成本辅助量定义。
+            % Manuscript Section III-B，式(27)：同步机出力上下限。
+            % 归一化关系供式(24)中的分段透视运行成本使用。
             C_Power_Flow = [C_Power_Flow, ...
                 P_SG_Norm_d_k_t == Gen_Prange_Inv* ...
                 (P_SG_d_k_t-Generator_P_Min.*u_SG_d_t), ...
                 P_SG_Norm_d_k_t >= 0, P_SG_Norm_d_k_t <= u_SG_d_t];
 
-            % 文档2.2基础潮流约束，式(1.17)：GFM-ES节点净注入。
+            % Manuscript Section III-B，式(27)：GFM-ES节点净注入。
             C_Power_Flow = [C_Power_Flow, ...
                 P_GFM_d_k_t == GFM_Candidate_Location_Mat* ...
                 (P_GFM_Dis_d_k_t-P_GFM_Ch_d_k_t)];
 
-            % 文档2.2基础潮流约束，式(1.18)-(1.19)：GFL-WG出力与弃风。
+            % Manuscript Section III-B，式(27)：GFL-WG出力与弃风。
             P_GFL_Available_d_k_t = P_GFL_Available(:,d,k,t).*u_GFL;
             C_Power_Flow = [C_Power_Flow, ...
                 P_GFL_d_k_t == P_GFL_Available_d_k_t-P_GFL_Curt_d_k_t, ...
@@ -239,7 +239,7 @@ for d = 1:D
                 P_GFL_Curt_d_k_t >= P_GFL_Available_d_k_t-CONF.PN_GFL_Node, ...
                 P_GFL_Curt_d_k_t <= P_GFL_Available_d_k_t];
 
-            % 文档2.2基础潮流约束，式(1.20)-(1.22)：线路潮流、限额与参考相角。
+            % Manuscript Section III-B：标准无损DC潮流、线路限额与参考相角。
             Delta_Theta_d_k_t = Theta_d_k_t(Branch_From) - Theta_d_k_t(Branch_To);
             C_Power_Flow = [C_Power_Flow, ...
                 P_Line_d_k_t == Line_B_Series.*Delta_Theta_d_k_t];
@@ -254,8 +254,8 @@ for d = 1:D
 end
 
 %% 4.3 电源运行约束
-%% 4.3.1 UC约束(文档2.3.1，式(1.23)-(1.30))
-% 式(1.23)-(1.24)的二元变量已在前文声明；UC状态在风电场景间共享。
+%% 4.3.1 UC约束(Manuscript Section III-B，式(28)及标准UC约束)
+% SG启停状态在同一典型日内跨风电场景共享。
 C_UC = [];
 for d = 1:D
     for t = 1:T
@@ -268,7 +268,7 @@ for d = 1:D
         Gen_Startup_Power = min(Generator_P_Max, Generator_P_Min+Gen_Ramp_Up*Delta_t);
         Gen_Shutdown_Power = min(Generator_P_Max, Generator_P_Min+Gen_Ramp_Down*Delta_t);
 
-        % 文档2.3.1 UC约束，式(1.25)-(1.26)：启停互斥与状态转换。
+        % Manuscript Section III-B，式(28)：启停互斥与循环状态转换。
         C_UC = [C_UC, ...
             u_SG_Start_d_t+u_SG_Stop_d_t <= 1, ...
             u_SG_d_t-u_SG_Previous == u_SG_Start_d_t-u_SG_Stop_d_t];
@@ -279,7 +279,7 @@ for d = 1:D
                 sum(u_SG_d_t) + sum(u_GFM_Module_Table) >= 1];
         end
 
-        % 文档2.3.1 UC约束，式(1.27)-(1.28)：逐场景同步机爬坡约束。
+        % Manuscript Section III-B引用的标准UC约束：逐场景同步机爬坡。
         for k = 1:K
             P_SG_d_k_t = P_SG(:,d,k,t);
             P_SG_Previous = P_SG(:,d,k,Previous_t);
@@ -291,7 +291,7 @@ for d = 1:D
         end
     end
 
-    % 文档2.3.1 UC约束，式(1.29)-(1.30)：最小开、停机时间。
+    % Manuscript Section III-B引用的标准UC约束：循环最小开、停机时间。
     for g = 1:G
         for t = 1:T
             Up_Window = mod((t-Gen_Min_Up(g)+1:t)-1,T)+1;
@@ -303,8 +303,8 @@ for d = 1:D
     end
 end
 
-%% 4.3.2 GFM-ES约束(文档2.3.2，式(1.31)-(1.39))
-% 式(1.31)的充放电状态变量已在前文声明；运行变量随风电场景变化。
+%% 4.3.2 GFM-ES约束(Manuscript Section III-C，式(29)-(30))
+% 充放电状态与运行变量随风电场景变化，投建状态跨场景共享。
 C_GFM_ES = [];
 for d = 1:D
     for t = 1:T
@@ -315,7 +315,7 @@ for d = 1:D
             E_GFM_d_k_t = E_GFM(:,d,k,t);
             u_GFM_Ch_d_k_t = u_GFM_Ch(:,d,k,t);
 
-            % 文档2.3.2 GFM-ES约束，式(1.32)-(1.36)：状态、功率边界与充放电互斥。
+            % Manuscript Section III-C，式(29)：功率边界与充放电互斥。
             C_GFM_ES = [C_GFM_ES, ...
                 u_GFM_Ch_d_k_t <= N_GFM_Installed, ...
                 P_GFM_Ch_d_k_t >= 0, P_GFM_Ch_d_k_t <= P_GFM_Installed, ...
@@ -323,7 +323,7 @@ for d = 1:D
                 P_GFM_Dis_d_k_t >= 0, P_GFM_Dis_d_k_t <= P_GFM_Installed, ...
                 P_GFM_Dis_d_k_t <= P_GFM_Candidate_Upper.*(1-u_GFM_Ch_d_k_t)];
 
-            % 文档2.3.2 GFM-ES约束，式(1.37)、(1.39)：能量递推与SOC边界。
+            % Manuscript Section III-C，式(30)：能量递推与SOC边界。
             if t == 1
                 E_GFM_Previous = E_GFM_Initial;
             else
@@ -337,15 +337,15 @@ for d = 1:D
         end
     end
 
-    % 文档2.3.2 GFM-ES约束，式(1.38)：典型日内首尾能量闭合。
+    % Manuscript Section III-C，式(30)：典型日内首尾能量闭合。
     for k = 1:K
         C_GFM_ES = [C_GFM_ES, E_GFM(:,d,k,T) == E_GFM_Initial];
     end
 end
 
 %% 4.4 安全约束
-%% 4.4.1 聚合安全状态约束与降阶安全网络(文档2.4.1，式(1.40)-(1.44))
-% 式(1.40)-(1.42)定义离线降阶网络；在线约束按典型日构造并集与交集状态。
+%% 4.4.1 聚合安全状态约束(Manuscript Section II-A，式(1)-(2))
+% 安全网络按Section II-B离线降阶；在线约束按典型日构造并集与交集状态。
 C_Aggregate = [];
 for d = 1:D
     u_SG_Sum_d     = zeros(G,1);
@@ -358,14 +358,14 @@ for d = 1:D
         u_SG_Off_Sum_d = u_SG_Off_Sum_d + (1-u_SG_d_t);
     end
 
-    % 文档2.4.1聚合安全状态约束，式(1.43)：典型日同步机状态并集。
+    % Manuscript式(1)：典型日同步机状态并集，用于SCC上界。
     C_Aggregate = [C_Aggregate, u_SG_SCC(:,d) <= u_SG_Sum_d];
 
-    % 文档2.4.1聚合安全状态约束，式(1.44)：典型日同步机状态交集。
+    % Manuscript式(2)：典型日同步机状态交集，用于LVRT与SCR下界。
     C_Aggregate = [C_Aggregate, 1-u_SG_SCR(:,d) <= u_SG_Off_Sum_d];
 end
 
-%% 4.4.2 阻抗列重构约束(文档2.4.2，式(1.45)-(1.51))
+%% 4.4.2 电抗列重构约束(Manuscript Section II-B，式(3)-(7))
 C_Impedance_SCC = [];
 C_Impedance_SCR = [];
 C_McCormick_Impedance_SCC = [];
@@ -376,8 +376,8 @@ for d = 1:D
     Z_SCR_Real_d = Z_SCR_Real(:,:,d);
     Z_SCR_Imag_d = Z_SCR_Imag(:,:,d);
 
-    % 文档2.4.2阻抗列重构约束，式(1.45)-(1.50)：SCC完整阻抗矩阵。
-    % 复数耦合式的实部与虚部均由同一辅助函数返回至本公式块。
+    % Manuscript式(6)-(7)：重构SCC所需的全部安全节点电抗列。
+    % 实现保留等价复数变量外壳，安全网络无损时其实部由约束固定为零。
     C_Impedance_SCC = [C_Impedance_SCC, ...
         Z_SCC_Real_d == Z_SCC_Real_d.', ...
         Z_SCC_Imag_d == Z_SCC_Imag_d.'];
@@ -391,7 +391,7 @@ for d = 1:D
     C_McCormick_Impedance_SCC = [C_McCormick_Impedance_SCC, ...
         C_McCormick_Impedance_SCC_d];
 
-    % 文档2.4.2阻抗列重构约束，式(1.45)-(1.50)：SCR的GFL-WG节点阻抗列。
+    % Manuscript式(6)-(7)：仅重构SCR所需的GFL-WG节点电抗列。
     [C_Impedance_SCR_d, C_McCormick_Impedance_SCR_d] = ...
         add_impedance_reconstruction_constraints( ...
         NET, CONF, Z_Bounds.SCR, u_SG_SCR(:,d), u_GFM_Module_Table, ...
@@ -403,26 +403,27 @@ for d = 1:D
         C_McCormick_Impedance_SCR_d];
 end
 
-%% 4.4.3 GFL-WG故障电压与LVRT增量电流约束(文档2.4.3，式(1.52)-(1.73))
-% 式(1.52)-(1.69)为在线约束；式(1.70)-(1.73)为离线参数可行性条件。
+%% 4.4.3 GFL-WG故障电压与LVRT增量电流约束(Manuscript Section II-C)
+% 式(13)-(19)及Appendix-B：交集状态残余电压与三段式LVRT；阈值和
+% 饱和增量电流上限在参数加载阶段校验。
 [C_LVRT, C_McCormick_LVRT] = add_gfl_lvrt_residual_constraints( ...
     NET, CONF, u_SG_SCR, u_GFM_Module_Table, V_F, V_F_0, V_F_Lin, ...
     V_F_Sat, Delta_F_0, Delta_F_Lin, Delta_F_Sat, Delta_I_GFL, ...
     Zeta_SG_V, Zeta_GFM_V);
 
-%% 4.4.4 短路电流水平约束(文档2.4.4，式(1.74)-(1.86))
+%% 4.4.4 SCC上界约束(Manuscript Section II-C，式(15)-(21))
 C_SCC = [];
 C_Fault_Transfer = [];
 C_McCormick_SCC = [];
 Phi_GFL = [];
 
-% 式(1.79)-(1.82)对应离线状态枚举；在线仅禁止预处理标记的不可行组合。
+% 式(17)对应离线并集-实际状态枚举；在线排除奇异配置-状态组合。
 C_SCC = [C_SCC, add_forbidden_state_pair_constraints( ...
     Z_Bounds.Invalid_State_Pairs, ...
     Z_Bounds.State_Catalog.SynchronousStates, Lambda_Configuration, ...
     u_SG_SCC, u_SG)];
 
-% 文档2.4.4短路电流水平约束，式(1.83)-(1.84)：配置分解辅助变量。
+% Manuscript式(17)、(20)：配置选择与LVRT电流的精确分解辅助变量。
 for d = 1:D
     for n = 1:NS
         for GFL_Index = 1:NGFL
@@ -460,7 +461,7 @@ for d = 1:D
     end
     Phi_GFL = [Phi_GFL, Phi_GFL_d]; %#ok<AGROW>
 
-    % 文档2.4.4短路电流水平约束，式(1.74)-(1.78)、(1.85)。
+    % Manuscript式(20)-(21)及Appendix-C：聚合SCC保守上界。
     [C_SCC_d, C_McCormick_SCC_d] = add_short_circuit_current_constraints( ...
         CONF_Safety, u_GFL_Safety, u_GFM_Module_Table, W_GFM_SCC(:,d), ...
         X_Diag_SCC_d, Delta_Y_Abs_Module, X_Diag_L, X_Diag_U, Phi_GFL_d);
@@ -468,7 +469,7 @@ for d = 1:D
     C_McCormick_SCC = [C_McCormick_SCC, C_McCormick_SCC_d];
 end
 
-%% 4.4.5 电压支撑强度约束(文档2.4.5，式(1.87))
+%% 4.4.5 SCR下界约束(Manuscript Section II-D，式(23))
 C_SCR = [];
 X_Diag_SCR = [];
 
@@ -479,7 +480,7 @@ C_SCR = [C_SCR, add_forbidden_configuration_state_constraints( ...
 
 SCR_Diagonal_Indices = sub2ind([NS,NGFL], ...
     GFL_Reduced_Indices,(1:NGFL).');
-% 式(1.87)采用GFL-WG场站额定功率，不使用逐时可用出力或实际出力。
+% 式(23)采用GFL-WG场站额定功率，不使用逐时可用出力或实际出力。
 PN_GFL_Rated_PU_Node = CONF.PN_GFL_pu_Node;
 PN_GFL_Rated_PU = PN_GFL_Rated_PU_Node(GFL_Original_Nodes);
 for d = 1:D
@@ -488,7 +489,7 @@ for d = 1:D
     X_Diag_SCR_d = Z_SCR_Imag_d(SCR_Diagonal_Indices);
     X_Diag_SCR = [X_Diag_SCR, X_Diag_SCR_d]; %#ok<AGROW>
 
-    % 文档2.4.5电压支撑强度约束，式(1.87)：典型日交集工况的经典短路比。
+    % Manuscript式(23)及Appendix-A：典型日交集状态的经典SCR下界。
     C_SCR = [C_SCR, add_classic_scr_constraints( ...
         CONF, ones(NGFL,1), X_Diag_SCR_d, PN_GFL_Rated_PU)];
 
@@ -498,12 +499,12 @@ for d = 1:D
     end
 end
 
-%% 4.5 McCormick线性化约束(文档2.5，式(1.88))
-% 依次汇总式(1.47)-(1.50)、式(1.66)-(1.67)及式(1.85)中的乘积项。
+%% 4.5 McCormick线性化约束(Manuscript Section II-B与II-C)
+% 汇总式(7)、式(18)及式(21)实现中二元变量与有界连续变量的精确乘积。
 C_McCormick = [C_McCormick_Impedance_SCC, ...
     C_McCormick_Impedance_SCR, C_McCormick_LVRT, C_McCormick_SCC];
 
-%% 5. 构造目标函数
+%% 5. 构造目标函数(Manuscript Section III-A，式(24))
 % 同步机单位时间运行成本采用归一化出力上的分段透视割近似。
 Gen_Cost_Quad_Norm = Generator_Cost_Quadratic .* (Generator_P_Range.^2);
 Gen_Cost_Lin_Norm = (2.*Generator_Cost_Quadratic.*Generator_P_Min + Generator_Cost_Linear) .* Generator_P_Range;
@@ -541,14 +542,14 @@ for d = 1:D
     end
 end
 
-% 文档第1节的目标函数辅助约束先行，随后按第2.1节至第2.5节顺序装配。
+% 目标函数辅助约束先行，随后按Section III运行约束与Section II安全约束装配。
 C = [C_Cost, C_Plan, C_Power_Flow, C_UC, C_GFM_ES, ...
     C_Aggregate, C_Impedance_SCC, C_Impedance_SCR, C_LVRT, ...
     C_Fault_Transfer, C_SCC, C_SCR, C_McCormick];
 
-% GFM-ES年化投建成本由单位功率成本和单位能量成本预先汇总到模块级。
-Cost_GFM_Inv = GFM_Module_Cost_Conv'*u_GFM_Module_Table;
-Cost_Total_Annual = Cost_GEN + Cost_GFM_Inv + Cost_Curt + Cost_UC;
+% 式(24)的GFM-ES年固定成本已包含年化投资和固定运维，各模块仅计一次。
+Cost_GFM_Fixed = GFM_Module_Cost_Conv'*u_GFM_Module_Table;
+Cost_Total_Annual = Cost_GEN + Cost_GFM_Fixed + Cost_Curt + Cost_UC;
 Objective = Cost_Total_Annual/CONF.ObjectiveScale;
 
 %% 6. 调用求解器
@@ -584,7 +585,7 @@ end
 
 Value_Cost_Total = value(Cost_Total_Annual);
 Value_Cost_GEN = value(Cost_GEN);
-Value_Cost_CON = value(Cost_GFM_Inv);
+Value_Cost_CON = value(Cost_GFM_Fixed);
 Value_Cost_Curt = value(Cost_Curt);
 Value_Cost_UC = value(Cost_UC);
 
@@ -609,20 +610,7 @@ Value_u_GFM_Module = value(u_GFM_Module);
 Value_u_GFM_Ch = value(u_GFM_Ch);
 Value_Lambda_Configuration = value(Lambda_Configuration);
 Diagnostics.ConfigurationSelection = Value_Lambda_Configuration;
-Diagnostics.ConfigurationModuleStatus = CONF.GFM_Config_Module_Matrix;
-Diagnostics.ConfigurationCandidateStatus = CONF.GFM_Config_Candidate_Matrix;
 Diagnostics.ConfigurationAllowed = Z_Bounds.Configuration_Allowed;
-Diagnostics.ConfigurationModuleCount = CONF.GFM_Config_Module_Count;
-Diagnostics.ValidStatePairs = Z_Bounds.Valid_State_Pairs;
-Diagnostics.InvalidStatePairs = Z_Bounds.Invalid_State_Pairs;
-Diagnostics.ValidSCRStates = Z_Bounds.Valid_SCR_States;
-Diagnostics.InvalidSCRStates = Z_Bounds.Invalid_SCR_States;
-Diagnostics.Tau_GFL_Scaled = Z_Bounds.Tau_GFL_Scaled;
-Diagnostics.StateCatalog = Z_Bounds.State_Catalog;
-Diagnostics.LVRTResidualVoltage = value(V_F);
-Diagnostics.LVRTIncrementCurrent = value(Delta_I_GFL);
-Diagnostics.FaultTransferAllocation = value(Chi_GFL);
-Diagnostics.SCCTransferTermScaled = value(Phi_GFL);
 
 % 阻抗矩阵在模型中经过CONF.KZ缩放，输出时还原到原始标幺尺度。
 Z_SCC_Val = value(Z_SCC_Real)/CONF.KZ + 1i*value(Z_SCC_Imag)/CONF.KZ;
@@ -636,10 +624,21 @@ for d = 1:D
 end
 
 %% 8. 计算短路电流指标
-% SCC_0、SCC_1和SCC_2均按MATPOWER原始节点顺序输出，单位统一为kA。
+% SCC_1为典型日SG并集工况的聚合保守上界。旧SCC_0/SCC_2接口保留，
+% 但本结果路径不再计算或保存；实际逐时后验结果在下一段独立重构。
 Value_u_GFM_Module_Table = Value_u_GFM_Module(Module_Linear_Index);
+Value_Phi_GFL = value(Phi_GFL);
 [SCC_0, SCC_1, SCC_2] = calculate_short_circuit_currents( ...
     NET, CONF, Value_u_GFM_Module_Table, u_GFL, Value_u_G_SCC, ...
-    Z_SCC_Val, Diagnostics.SCCTransferTermScaled);
+    Z_SCC_Val, Value_Phi_GFL, false);
+
+%% 9. 基于最终投建方案和实际逐时SG状态进行独立安全指标复算
+% 本步骤不读取SCC/SCR约束辅助变量，因此与优化模型是否启用相应安全
+% 约束无关。逐时数组顺序为[时段,典型日,安全节点]。
+[SCC_TimeResolved, SCR_TimeResolved] = ...
+    calculate_time_resolved_security_metrics( ...
+    NET, CONF, Value_u_GFM_Module_Table, u_GFL, Value_u_G);
+SecurityValidation = check_aggregated_security_conservatism( ...
+    SCC_1, SCR, SCC_TimeResolved, SCR_TimeResolved, CONF);
 
 end
