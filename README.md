@@ -1,5 +1,13 @@
 # GFM-ES安全配置优化项目
 
+## 2026-09 IV-C 脚本与 COPT 求解器迁移
+
+- 补充论文 IV-C 灵敏度结果绘图脚本：`code/scripts/figure/for_paper/plot_fig6_scc_sensitivity.m`（SCC）和 `plot_fig7_scr_sensitivity.m`（SCR）。
+- Fig. 6/7 脚本读取 `results_useful/from_laptop/IV-C/{SCC,SCR}` 下的 13 个 Stage-2 `.mat` 结果；这些绘图输入随版本提交，脚本不会自动重新运行规划求解。
+- 多时段规划的底层 MILP 求解器由 Gurobi 替换为 COPT，仍通过 MATLAB + YALMIP 调用；保留既有求解参数、初始解传递、诊断和日志归档流程。
+- Gurobi 专属搜索参数不映射到 COPT；线程数、MIP gap、时间限制和 quiet/verbose 行为按 COPT 接口设置。
+
+
 ## 最近更新：设备级与系统级模型的参数对齐及 GFM 模型完善
 
 本轮更新以 `docs/05_算例参数/基于场景随机优化的多时段模块化GFM-ES配置优化模型_ver_2_算例分析.docx` 为主要依据，并以同目录 PDF 版本交叉核对，对默认多时段算例参数进行了系统更新：
@@ -8,6 +16,7 @@
 - 有明确文献或数据来源的参数沿用相应依据，缺少唯一工程定值或需要检验稳健性的参数明确作为灵敏度分析参数，不再以无来源的默认值代替；
 - 典型日权重、24 h 负荷曲线、逐典型日风电场景及场景概率直接读取 `data/RTS-GMLC/processed/rts_gmlc_v0.2.3_fixed_extreme_medoids/run_20260822_162606/` 中的实际结果；
 - 当前默认规模为 4 个典型日、每个典型日 4 个风电场景、每个典型日 24 个 1 h 时段；
+- 默认 RTS-GMLC D=4、K=4 时序输入文件随版本提供，数据来源和处理版本见 `data/RTS-GMLC/README.md` 及该结果目录的 `csv/source_manifest.csv`。
 - 参数维护入口仍为 `data/params/generate_multiple_snapshot_default_params.m`，运行时 JSON 由该脚本生成，二者应保持同步。
 - 设备级 GFL-WG 的 LVRT 参数与系统级 `params.GFL_WG` 参数保持一致，包括额定电流、LVRT 电压阈值、无功电流斜率及附加无功电流上限；
 - 系统级 GFM 电气参数由 `generate_multiple_snapshot_default_params.m` 统一维护，设备级模型通过运行时 JSON 恢复设备基准量，避免系统基准和设备基准混用；
@@ -98,7 +107,7 @@ GFM 模型入口为 `simulink/models/Grid_Forming_Inverters.slx`；虚拟阻抗�
 - 故障节点GFL-WG饱和限流、故障节点GFM-ES虚拟阻抗限流，以及非故障节点GFM-ES正常运行电抗；
 - GFM-ES配置方案集合、配置选择变量、配置状态映射、配置相关故障转移系数上界及不可行阻抗状态排除；
 - 按典型日权重、场景概率和时段时长计算的期望运行成本；
-- 两阶段Gurobi求解、场景结果打包、热启动映射、诊断输出和确定性退化检查。
+- 两阶段COPT求解、场景结果打包、热启动映射、诊断输出和确定性退化检查。
 
 当前已增加GFL的LVRT与限流环节，并完成相应的Simulink仿真组织：
 
@@ -212,7 +221,7 @@ code/functions/equipment/configure_simulink_file_generation_from_model.m
 
 ## 结果与复核
 
-求解结果默认写入 `results/`。该目录及Gurobi日志、MATLAB结果文件均不纳入Git版本控制。建议至少检查：
+求解结果默认写入 `results/`。该目录及求解器日志、MATLAB结果文件均不纳入Git版本控制。建议至少检查：
 
 - `Diagnostics.problem`、最优间隙和是否存在可行整数解；
 - `u_GFM_Mod`、`lambda_c`、`u_G`、`u_G_Start` 与 `u_G_Stop`；
@@ -255,7 +264,7 @@ logs/                  本地运行日志（Git忽略）
 - MATLAB
 - MATPOWER
 - YALMIP
-- Gurobi
+- COPT
 
 MATLAB后台启动与环境配置说明见：
 

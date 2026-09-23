@@ -553,8 +553,8 @@ Cost_Total_Annual = Cost_GEN + Cost_GFM_Fixed + Cost_Curt + Cost_UC;
 Objective = Cost_Total_Annual/CONF.ObjectiveScale;
 
 %% 6. 调用求解器
-% 求解器参数由build_gurobi_options统一设置。
-ops = build_gurobi_options(CONF.Solver);
+% 求解器参数由build_copt_options统一设置。
+ops = build_copt_options(CONF.Solver);
 if isfield(CONF, 'MIPStart')
     assign(u_SG, CONF.MIPStart.u_G);
     assign(u_SG_Start, CONF.MIPStart.u_G_Start);
@@ -565,8 +565,25 @@ if isfield(CONF, 'MIPStart')
     assign(u_GFM_Ch, CONF.MIPStart.u_GFM_Ch);
     ops.usex0 = 1;
     ops.warmstart = 1;
+    % 当前MIP start仅初始化部分变量；COPT需要启用子MIP补全部分初始解。
+    ops.copt.MipStartMode = 2;
 end
 sol = optimize(C, Objective, ops);
+COPT_Log_Source = '';
+Results_Directory = '';
+if ops.verbose > 0
+    % YALMIP的COPT适配器将日志写到当前目录下的copt.log。
+    COPT_Log_Source = fullfile(pwd, 'copt.log');
+    Project_Root = fileparts(fileparts(fileparts(fileparts(mfilename('fullpath')))));
+    Results_Directory = fullfile(Project_Root, 'results');
+    if ~isfolder(Results_Directory)
+        mkdir(Results_Directory);
+    end
+end
+if ~isempty(COPT_Log_Source) && isfile(COPT_Log_Source)
+    % 为保持已有结果日志路径兼容，沿用原日志文件名。
+    movefile(COPT_Log_Source, fullfile(Results_Directory, 'gurobi_run.log'), 'f');
+end
 
 %% 7. 提取优化结果
 Diagnostics = build_multiple_snapshot_diagnostics(sol);
