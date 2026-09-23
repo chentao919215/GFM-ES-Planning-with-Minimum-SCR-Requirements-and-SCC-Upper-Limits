@@ -581,8 +581,15 @@ if ops.verbose > 0
     end
 end
 if ~isempty(COPT_Log_Source) && isfile(COPT_Log_Source)
-    % 为保持已有结果日志路径兼容，沿用原日志文件名。
-    movefile(COPT_Log_Source, fullfile(Results_Directory, 'gurobi_run.log'), 'f');
+    % 将YALMIP在当前目录生成的COPT日志归档到项目results目录。
+    COPT_Log_Destination = fullfile(Results_Directory, 'copt.log');
+    [Log_Moved, Log_Message] = movefile( ...
+        COPT_Log_Source, COPT_Log_Destination, 'f');
+    if ~Log_Moved
+        warning('MultipleSnapshot:LogArchiveFailed', ...
+            '无法将COPT日志从%s移动到%s：%s', ...
+            COPT_Log_Source, COPT_Log_Destination, Log_Message);
+    end
 end
 
 %% 7. 提取优化结果
