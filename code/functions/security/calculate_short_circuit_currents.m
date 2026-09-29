@@ -10,6 +10,7 @@ function [SCC_0, SCC_1, SCC_2] = calculate_short_circuit_currents( ...
 % false，因为SCC_0和SCC_2不再保存，其报告用途由逐时后验SCC取代。
 
 CONF = normalize_multiple_snapshot_conf(CONF);
+Consider_Remote_GFM_Limiting = false; % Manual SCC_2 ex-post mode switch.
 if nargin < 8 || isempty(Calculate_Legacy_Posthoc)
     Calculate_Legacy_Posthoc = true;
 end
@@ -70,7 +71,8 @@ end
 % 节点GFL-WG的LVRT转移贡献；规划新增GFM-ES模块全部取未投建。
 All_Nodes = (1:N).';
 SCC_0_One_Day = calculate_fixed_state_scc(NET, CONF, zeros(M,1), ...
-    u_GFL, ones(G,1), All_Nodes, '全同步机基准工况');
+    u_GFL, ones(G,1), All_Nodes, '全同步机基准工况', [], ...
+    Consider_Remote_GFM_Limiting);
 SCC_0 = repmat(SCC_0_One_Day,1,D);
 
 %% 3. SCC_2：后验复算结果
@@ -80,7 +82,8 @@ SCC_2 = zeros(N,D);
 for d = 1:D
     SCC_2(:,d) = calculate_fixed_state_scc(NET, CONF, ...
         Value_u_GFM_Module, u_GFL, Value_u_G_SCC(:,d), All_Nodes, ...
-        sprintf('典型日%d后验复算工况',d));
+        sprintf('典型日%d后验复算工况',d), [], ...
+        Consider_Remote_GFM_Limiting);
 end
 
 end

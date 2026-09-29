@@ -59,8 +59,6 @@ if isfield(sol, 'solveroutput') && isstruct(sol.solveroutput)
         (isfield(Solver_Result,'x') && ~isempty(Solver_Result.x));
 end
 
-end
-
 function value = read_numeric_field(Input_Struct, Field_Names, Default_Value)
 %% 按兼容字段名读取求解器结果中的数值字段。
 

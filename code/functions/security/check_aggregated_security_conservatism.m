@@ -1,9 +1,15 @@
 function Validation = check_aggregated_security_conservatism( ...
     SCC_Aggregated, SCR_Aggregated, SCC_TimeResolved, ...
-    SCR_TimeResolved, CONF)
+    SCR_TimeResolved, CONF, Aggregated_Status, TimeResolved_Status)
 %% Check daily aggregate bounds against extrema of hourly posterior results.
 
 CONF = normalize_multiple_snapshot_conf(CONF);
+if nargin < 6
+    Aggregated_Status = struct();
+end
+if nargin < 7
+    TimeResolved_Status = struct();
+end
 T = CONF.PeriodCount;
 D = CONF.TypicalDayCount;
 SCC_Nodes = CONF.SCC_Constraint_Original_Nodes(:);
@@ -19,8 +25,8 @@ if ~isequal(size(SCC_Aggregated), [CONF.Bn D]) || ...
         'Aggregate or time-resolved security results have invalid dimensions.');
 end
 
-SCC_Hourly_Max = reshape(max(SCC_TimeResolved,[],1),D,NSCC);
-SCR_Hourly_Min = reshape(min(SCR_TimeResolved,[],1),D,NGFL);
+SCC_Hourly_Max = reshape(max(SCC_TimeResolved,[],1,'omitnan'),D,NSCC);
+SCR_Hourly_Min = reshape(min(SCR_TimeResolved,[],1,'omitnan'),D,NGFL);
 SCC_Aggregated_Selected = SCC_Aggregated(SCC_Nodes,:).';
 SCR_Aggregated_Selected = SCR_Aggregated(SCR_Nodes,:).';
 
@@ -43,6 +49,9 @@ Validation.SCR = summarize_check(SCR_Difference, SCR_TimeResolved, ...
     SCR_Tolerance, false);
 Validation.SCR.Unit = 'dimensionless';
 Validation.Passed = Validation.SCC.Passed && Validation.SCR.Passed;
+Validation.Calculation = struct();
+Validation.Calculation.Aggregated = Aggregated_Status;
+Validation.Calculation.TimeResolved = TimeResolved_Status;
 
 end
 
@@ -51,25 +60,41 @@ function Summary = summarize_check( ...
     Tolerance, Is_Maximum)
 %% Record the largest raw difference and its exact day/period/bus location.
 
-[Raw_Maximum, Linear_Index] = max(Difference(:));
-[Day_Index, Node_Index] = ind2sub(size(Difference),Linear_Index);
-Hourly_Series = TimeResolved(:,Day_Index,Node_Index);
-if Is_Maximum
-    [~, Period_Index] = max(Hourly_Series);
-else
-    [~, Period_Index] = min(Hourly_Series);
-end
-
 Summary = struct();
 Summary.Tolerance = Tolerance;
-Summary.RawMaximumDifference = Raw_Maximum;
-Summary.MaximumViolation = max(0,Raw_Maximum);
-Summary.Passed = Raw_Maximum <= Tolerance;
-Summary.TypicalDay = Day_Index;
-Summary.Period = Period_Index;
-Summary.OriginalNode = Nodes(Node_Index);
-Summary.TimeResolvedExtreme = Hourly_Extreme(Day_Index,Node_Index);
-Summary.AggregatedValue = Aggregated(Day_Index,Node_Index);
+Available = isfinite(Difference) & isfinite(Hourly_Extreme) & isfinite(Aggregated);
+Summary.Evaluable = all(Available,'all');
+Summary.UnavailableCount = nnz(~Available);
+Summary.AvailableMask = Available;
+if any(Available,'all')
+    Difference_For_Max = Difference;
+    Difference_For_Max(~Available) = -Inf;
+    [Raw_Maximum, Linear_Index] = max(Difference_For_Max(:));
+    [Day_Index, Node_Index] = ind2sub(size(Difference),Linear_Index);
+    Hourly_Series = TimeResolved(:,Day_Index,Node_Index);
+    if Is_Maximum
+        [~, Period_Index] = max(Hourly_Series,[],'omitnan');
+    else
+        [~, Period_Index] = min(Hourly_Series,[],'omitnan');
+    end
+    Summary.RawMaximumDifference = Raw_Maximum;
+    Summary.MaximumViolation = max(0,Raw_Maximum);
+    Summary.TypicalDay = Day_Index;
+    Summary.Period = Period_Index;
+    Summary.OriginalNode = Nodes(Node_Index);
+    Summary.TimeResolvedExtreme = Hourly_Extreme(Day_Index,Node_Index);
+    Summary.AggregatedValue = Aggregated(Day_Index,Node_Index);
+else
+    Summary.RawMaximumDifference = NaN;
+    Summary.MaximumViolation = NaN;
+    Summary.TypicalDay = NaN;
+    Summary.Period = NaN;
+    Summary.OriginalNode = NaN;
+    Summary.TimeResolvedExtreme = NaN;
+    Summary.AggregatedValue = NaN;
+end
+Summary.Passed = Summary.Evaluable && ...
+    Summary.RawMaximumDifference <= Tolerance;
 
 end
 

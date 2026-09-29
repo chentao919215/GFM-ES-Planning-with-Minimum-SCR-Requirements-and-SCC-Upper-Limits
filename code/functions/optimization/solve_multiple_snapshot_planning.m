@@ -11,6 +11,12 @@ function [SCC_0,SCC_1,SCC_2,Value_P_Line,Value_Theta,Value_P_G,Value_P_GFL,Value
 % 安全状态仍仅在各典型日内跨时段聚合，安全网络与McCormick变量不带场景维。
 
 CONF = normalize_multiple_snapshot_conf(CONF);
+Security_Constraint_Assembly = ...
+    build_multiple_snapshot_security_constraint_assembly(CONF);
+Enable_SCC = Security_Constraint_Assembly.Enable_SCC;
+Enable_SCR = Security_Constraint_Assembly.Enable_SCR;
+Need_Intersection_State = ...
+    Security_Constraint_Assembly.Aggregate_Intersection;
 
 %% 1. 整理输入参数
 % u_GFL为已建GFL-WG节点状态，不作为优化变量。
@@ -89,8 +95,21 @@ GFM_SOC_Max              = CONF.GFM_Candidate_SOC_Max(:);
 GFM_SOC_Initial          = CONF.GFM_Candidate_SOC_Initial(:);
 GFM_SOC_Min              = CONF.GFM_Candidate_SOC_Min(:);
 
-% Manuscript Section II-B：离线电抗元素上下界用于精确McCormick线性化。
-Z_Bounds = calculate_impedance_bounds(NET, CONF);
+% 仅为已启用安全关系预处理阻抗界与无效状态目录。双开关关闭时不以
+% 安全网络适用条件筛除任何规划配置。
+if Enable_SCC || Enable_SCR
+    Z_Bounds = calculate_impedance_bounds( ...
+        NET, CONF, Enable_SCC, Enable_SCR);
+else
+    Z_Bounds = struct();
+    Z_Bounds.Configuration_Allowed = true(C_Configuration,1);
+end
+if Enable_SCC
+    Union_State_Table = double(Z_Bounds.State_Catalog.SynchronousStates);
+    S_Union = size(Union_State_Table,1);
+else
+    S_Union = 0;
+end
 
 %% 3. 定义优化变量
 % 逐时二进制变量：同步机运行状态以及启动、停机动作。
@@ -110,6 +129,11 @@ u_GFM_Ch = binvar(N_GFM,D,K,T,'full');
 % 每个典型日分别构造安全状态：SCC采用日内并集，SCR采用日内交集。
 u_SG_SCC = binvar(G,D,'full');
 u_SG_SCR = binvar(G,D,'full');
+if Enable_SCC
+    z_SG_Union = binvar(S_Union,D,'full');
+else
+    z_SG_Union = [];
+end
 
 % 场景相关连续运行变量，统一采用[元件,典型日,场景,时段]索引。
 P_SG       = sdpvar(G,D,K,T,'full');
@@ -142,6 +166,11 @@ Delta_I_GFL = sdpvar(NS,NGFL,D,'full');
 Zeta_SG_V = sdpvar(G,NS,NS,D,'full');
 Zeta_GFM_V = sdpvar(M_GFM,NS,NS,D,'full');
 Chi_GFL = sdpvar(C_Configuration,NS,NGFL,D,'full');
+if Enable_SCC
+    Chi_Union_GFL = sdpvar(C_Configuration*S_Union,NS,NGFL,D,'full');
+else
+    Chi_Union_GFL = [];
+end
 
 % 短路电流水平保守上界工况的阻抗重构与SCC辅助变量。
 W_SGZ_X_SCC  = sdpvar(G,NS,D,'full');
@@ -352,17 +381,27 @@ for d = 1:D
     u_SG_Off_Sum_d = zeros(G,1);
     for t = 1:T
         u_SG_d_t = u_SG(:,d,t);
-        C_Aggregate = [C_Aggregate, u_SG_SCC(:,d) >= u_SG_d_t];
-        C_Aggregate = [C_Aggregate, u_SG_SCR(:,d) <= u_SG_d_t];
+        if Enable_SCC
+            C_Aggregate = [C_Aggregate, u_SG_SCC(:,d) >= u_SG_d_t];
+        end
+        if Need_Intersection_State
+            C_Aggregate = [C_Aggregate, u_SG_SCR(:,d) <= u_SG_d_t];
+        end
         u_SG_Sum_d     = u_SG_Sum_d + u_SG_d_t;
         u_SG_Off_Sum_d = u_SG_Off_Sum_d + (1-u_SG_d_t);
     end
 
     % Manuscript式(1)：典型日同步机状态并集，用于SCC上界。
-    C_Aggregate = [C_Aggregate, u_SG_SCC(:,d) <= u_SG_Sum_d];
+    if Enable_SCC
+        C_Aggregate = [C_Aggregate, u_SG_SCC(:,d) <= u_SG_Sum_d, ...
+            sum(z_SG_Union(:,d)) == 1, ...
+            u_SG_SCC(:,d) == Union_State_Table.'*z_SG_Union(:,d)];
+    end
 
-    % Manuscript式(2)：典型日同步机状态交集，用于LVRT与SCR下界。
-    C_Aggregate = [C_Aggregate, 1-u_SG_SCR(:,d) <= u_SG_Off_Sum_d];
+    % Manuscript式(2)：交集状态用于SCC的LVRT反馈或SCR下界。
+    if Need_Intersection_State
+        C_Aggregate = [C_Aggregate, 1-u_SG_SCR(:,d) <= u_SG_Off_Sum_d];
+    end
 end
 
 %% 4.4.2 电抗列重构约束(Manuscript Section II-B，式(3)-(7))
@@ -376,40 +415,48 @@ for d = 1:D
     Z_SCR_Real_d = Z_SCR_Real(:,:,d);
     Z_SCR_Imag_d = Z_SCR_Imag(:,:,d);
 
-    % Manuscript式(6)-(7)：重构SCC所需的全部安全节点电抗列。
-    % 实现保留等价复数变量外壳，安全网络无损时其实部由约束固定为零。
-    C_Impedance_SCC = [C_Impedance_SCC, ...
-        Z_SCC_Real_d == Z_SCC_Real_d.', ...
-        Z_SCC_Imag_d == Z_SCC_Imag_d.'];
-    [C_Impedance_SCC_d, C_McCormick_Impedance_SCC_d] = ...
-        add_impedance_reconstruction_constraints( ...
-        NET, CONF, Z_Bounds.SCC, u_SG_SCC(:,d), u_GFM_Module_Table, ...
-        Z_SCC_Real_d, Z_SCC_Imag_d, W_SGZ_X_SCC(:,:,d), ...
-        W_SGZ_R_SCC(:,:,d), W_GFMZ_X_SCC(:,:,d), ...
-        W_GFMZ_R_SCC(:,:,d), (1:NS).');
-    C_Impedance_SCC = [C_Impedance_SCC, C_Impedance_SCC_d];
-    C_McCormick_Impedance_SCC = [C_McCormick_Impedance_SCC, ...
-        C_McCormick_Impedance_SCC_d];
+    if Enable_SCC
+        % Manuscript式(6)-(7)：重构SCC所需的全部安全节点电抗列。
+        % 实现保留等价复数变量外壳，安全网络无损时其实部由约束固定为零。
+        C_Impedance_SCC = [C_Impedance_SCC, ...
+            Z_SCC_Real_d == Z_SCC_Real_d.', ...
+            Z_SCC_Imag_d == Z_SCC_Imag_d.'];
+        [C_Impedance_SCC_d, C_McCormick_Impedance_SCC_d] = ...
+            add_impedance_reconstruction_constraints( ...
+            NET, CONF, Z_Bounds.SCC, u_SG_SCC(:,d), u_GFM_Module_Table, ...
+            Z_SCC_Real_d, Z_SCC_Imag_d, W_SGZ_X_SCC(:,:,d), ...
+            W_SGZ_R_SCC(:,:,d), W_GFMZ_X_SCC(:,:,d), ...
+            W_GFMZ_R_SCC(:,:,d), (1:NS).');
+        C_Impedance_SCC = [C_Impedance_SCC, C_Impedance_SCC_d];
+        C_McCormick_Impedance_SCC = [C_McCormick_Impedance_SCC, ...
+            C_McCormick_Impedance_SCC_d];
+    end
 
-    % Manuscript式(6)-(7)：仅重构SCR所需的GFL-WG节点电抗列。
-    [C_Impedance_SCR_d, C_McCormick_Impedance_SCR_d] = ...
-        add_impedance_reconstruction_constraints( ...
-        NET, CONF, Z_Bounds.SCR, u_SG_SCR(:,d), u_GFM_Module_Table, ...
-        Z_SCR_Real_d, Z_SCR_Imag_d, W_SGZ_X_SCR(:,:,d), ...
-        W_SGZ_R_SCR(:,:,d), W_GFMZ_X_SCR(:,:,d), ...
-        W_GFMZ_R_SCR(:,:,d), GFL_Reduced_Indices);
-    C_Impedance_SCR = [C_Impedance_SCR, C_Impedance_SCR_d];
-    C_McCormick_Impedance_SCR = [C_McCormick_Impedance_SCR, ...
-        C_McCormick_Impedance_SCR_d];
+    if Enable_SCR
+        % Manuscript式(6)-(7)：仅重构SCR所需的GFL-WG节点电抗列。
+        [C_Impedance_SCR_d, C_McCormick_Impedance_SCR_d] = ...
+            add_impedance_reconstruction_constraints( ...
+            NET, CONF, Z_Bounds.SCR, u_SG_SCR(:,d), u_GFM_Module_Table, ...
+            Z_SCR_Real_d, Z_SCR_Imag_d, W_SGZ_X_SCR(:,:,d), ...
+            W_SGZ_R_SCR(:,:,d), W_GFMZ_X_SCR(:,:,d), ...
+            W_GFMZ_R_SCR(:,:,d), GFL_Reduced_Indices);
+        C_Impedance_SCR = [C_Impedance_SCR, C_Impedance_SCR_d];
+        C_McCormick_Impedance_SCR = [C_McCormick_Impedance_SCR, ...
+            C_McCormick_Impedance_SCR_d];
+    end
 end
 
 %% 4.4.3 GFL-WG故障电压与LVRT增量电流约束(Manuscript Section II-C)
 % 式(13)-(19)及Appendix-B：交集状态残余电压与三段式LVRT；阈值和
 % 饱和增量电流上限在参数加载阶段校验。
-[C_LVRT, C_McCormick_LVRT] = add_gfl_lvrt_residual_constraints( ...
-    NET, CONF, u_SG_SCR, u_GFM_Module_Table, V_F, V_F_0, V_F_Lin, ...
-    V_F_Sat, Delta_F_0, Delta_F_Lin, Delta_F_Sat, Delta_I_GFL, ...
-    Zeta_SG_V, Zeta_GFM_V);
+C_LVRT = [];
+C_McCormick_LVRT = [];
+if Enable_SCC
+    [C_LVRT, C_McCormick_LVRT] = add_gfl_lvrt_residual_constraints( ...
+        NET, CONF, u_SG_SCR, u_GFM_Module_Table, V_F, V_F_0, V_F_Lin, ...
+        V_F_Sat, Delta_F_0, Delta_F_Lin, Delta_F_Sat, Delta_I_GFL, ...
+        Zeta_SG_V, Zeta_GFM_V);
+end
 
 %% 4.4.4 SCC上界约束(Manuscript Section II-C，式(15)-(21))
 C_SCC = [];
@@ -417,85 +464,119 @@ C_Fault_Transfer = [];
 C_McCormick_SCC = [];
 Phi_GFL = [];
 
-% 式(17)对应离线并集-实际状态枚举；在线排除奇异配置-状态组合。
-C_SCC = [C_SCC, add_forbidden_state_pair_constraints( ...
-    Z_Bounds.Invalid_State_Pairs, ...
-    Z_Bounds.State_Catalog.SynchronousStates, Lambda_Configuration, ...
-    u_SG_SCC, u_SG)];
+if Enable_SCC
+    % 式(17)对应离线并集-实际状态枚举；在线排除奇异配置-状态组合。
+    C_SCC = [C_SCC, add_forbidden_state_pair_constraints( ...
+        Z_Bounds.Invalid_State_Pairs, ...
+        Z_Bounds.State_Catalog.SynchronousStates, Lambda_Configuration, ...
+        u_SG_SCC, u_SG)];
 
-% Manuscript式(17)、(20)：配置选择与LVRT电流的精确分解辅助变量。
-for d = 1:D
-    for n = 1:NS
-        for GFL_Index = 1:NGFL
-            Delta_I_Upper = CONF.Delta_I_GFL_pu_Node( ...
-                GFL_Original_Nodes(GFL_Index));
-            Chi_Vec = Chi_GFL(:,n,GFL_Index,d);
-            C_Fault_Transfer = [C_Fault_Transfer, ...
-                Chi_Vec >= 0, ...
-                Chi_Vec <= Delta_I_Upper*Lambda_Configuration, ...
-                sum(Chi_Vec) == Delta_I_GFL(n,GFL_Index,d)]; %#ok<AGROW>
+    % Manuscript Section III-A：不可用的配置-并集状态对不能被同时选中。
+    for r = 1:size(Z_Bounds.Invalid_Union_States,1)
+        c = Z_Bounds.Invalid_Union_States(r,1);
+        s = Z_Bounds.Invalid_Union_States(r,2);
+        C_SCC = [C_SCC, Lambda_Configuration(c) + ...
+            z_SG_Union(s,:) <= 1]; %#ok<AGROW>
+    end
+
+    % Manuscript式(17)、(20)：先按配置分解LVRT电流，再对所选并集状态
+    % 与各配置分量的乘积施加精确McCormick约束。
+    for d = 1:D
+        for n = 1:NS
+            for GFL_Index = 1:NGFL
+                Delta_I_Upper = CONF.Delta_I_GFL_pu_Node( ...
+                    GFL_Original_Nodes(GFL_Index));
+                Chi_Vec = Chi_GFL(:,n,GFL_Index,d);
+                C_Fault_Transfer = [C_Fault_Transfer, ...
+                    Chi_Vec >= 0, ...
+                    Chi_Vec <= Delta_I_Upper*Lambda_Configuration, ...
+                    sum(Chi_Vec) == Delta_I_GFL(n,GFL_Index,d)]; %#ok<AGROW>
+                for s = 1:S_Union
+                    Pair_Indices = (s-1)*C_Configuration + ...
+                        (1:C_Configuration);
+                    Chi_Union_Vec = Chi_Union_GFL( ...
+                        Pair_Indices,n,GFL_Index,d);
+                    C_Fault_Transfer = [C_Fault_Transfer, ...
+                        Chi_Union_Vec >= 0, ...
+                        Chi_Union_Vec <= Chi_Vec, ...
+                        Chi_Union_Vec <= ...
+                            Delta_I_Upper*z_SG_Union(s,d), ...
+                        Chi_Union_Vec >= Chi_Vec - ...
+                            Delta_I_Upper*(1-z_SG_Union(s,d))]; %#ok<AGROW>
+                end
+            end
         end
     end
-end
 
-u_GFL_Safety = u_GFL(Safety_Nodes);
-CONF_Safety = CONF;
-CONF_Safety.GFM_Module_Loc_Mat = NET.Safety_GFM_Module_Location_Matrix;
-CONF_Safety.I_limit = CONF.I_limit(Safety_Nodes);
-CONF_Safety.Delta_I_GFL_pu_Node = CONF.Delta_I_GFL_pu_Node(Safety_Nodes);
-X_Diag_L = diag(Z_Bounds.SCC.Imag_Min);
-X_Diag_U = diag(Z_Bounds.SCC.Imag_Max);
+    u_GFL_Safety = u_GFL(Safety_Nodes);
+    CONF_Safety = CONF;
+    CONF_Safety.GFM_Module_Loc_Mat = NET.Safety_GFM_Module_Location_Matrix;
+    CONF_Safety.I_limit = CONF.I_limit(Safety_Nodes);
+    CONF_Safety.Delta_I_GFL_pu_Node = CONF.Delta_I_GFL_pu_Node(Safety_Nodes);
+    X_Diag_L = diag(Z_Bounds.SCC.Imag_Min);
+    X_Diag_U = diag(Z_Bounds.SCC.Imag_Max);
 
-for d = 1:D
-    Z_SCC_Imag_d = Z_SCC_Imag(:,:,d);
-    X_Diag_SCC_d = diag(Z_SCC_Imag_d);
-    Phi_GFL_d = [];
-    for n = 1:NS
-        Phi_n = 0;
-        for GFL_Index = 1:NGFL
-            Phi_n = Phi_n + ...
-                Z_Bounds.Tau_GFL_Scaled(:,n,GFL_Index).' * ...
-                Chi_GFL(:,n,GFL_Index,d);
+    for d = 1:D
+        Z_SCC_Imag_d = Z_SCC_Imag(:,:,d);
+        X_Diag_SCC_d = diag(Z_SCC_Imag_d);
+        Phi_GFL_d = [];
+        for n = 1:NS
+            Phi_n = 0;
+            for GFL_Index = 1:NGFL
+                Phi_n = Phi_n + ...
+                    reshape(Z_Bounds.Tau_GFL_Scaled(:,:,n,GFL_Index), ...
+                        C_Configuration*S_Union,1).' * ...
+                    Chi_Union_GFL(:,n,GFL_Index,d);
+            end
+            Phi_GFL_d = [Phi_GFL_d; Phi_n]; %#ok<AGROW>
         end
-        Phi_GFL_d = [Phi_GFL_d; Phi_n]; %#ok<AGROW>
-    end
-    Phi_GFL = [Phi_GFL, Phi_GFL_d]; %#ok<AGROW>
+        Phi_GFL = [Phi_GFL, Phi_GFL_d]; %#ok<AGROW>
 
-    % Manuscript式(20)-(21)及Appendix-C：聚合SCC保守上界。
-    [C_SCC_d, C_McCormick_SCC_d] = add_short_circuit_current_constraints( ...
-        CONF_Safety, u_GFL_Safety, u_GFM_Module_Table, W_GFM_SCC(:,d), ...
-        X_Diag_SCC_d, Delta_Y_Abs_Module, X_Diag_L, X_Diag_U, Phi_GFL_d);
-    C_SCC = [C_SCC, C_SCC_d];
-    C_McCormick_SCC = [C_McCormick_SCC, C_McCormick_SCC_d];
+        % Manuscript式(20)-(21)及Appendix-C：聚合SCC保守上界。
+        [C_SCC_d, C_McCormick_SCC_d] = add_short_circuit_current_constraints( ...
+            CONF_Safety, u_GFL_Safety, u_GFM_Module_Table, W_GFM_SCC(:,d), ...
+            X_Diag_SCC_d, Delta_Y_Abs_Module, X_Diag_L, X_Diag_U, Phi_GFL_d);
+        C_SCC = [C_SCC, C_SCC_d];
+        C_McCormick_SCC = [C_McCormick_SCC, C_McCormick_SCC_d];
+    end
 end
 
 %% 4.4.5 SCR下界约束(Manuscript Section II-D，式(23))
 C_SCR = [];
 X_Diag_SCR = [];
 
-% 文档未单列在线公式：禁止离线预处理标记的无效配置-交集状态组合。
-C_SCR = [C_SCR, add_forbidden_configuration_state_constraints( ...
-    Z_Bounds.Invalid_SCR_States, ...
-    Z_Bounds.State_Catalog.SynchronousStates, Lambda_Configuration, u_SG_SCR)];
+% 无效交集状态同时是SCC-LVRT和SCR的安全网络适用条件；仅在至少一个
+% 指标启用时排除，双关闭时不限制经济性规划可行域。
+C_Security_Applicability = [];
+if Need_Intersection_State
+    C_Security_Applicability = [C_Security_Applicability, ...
+        add_forbidden_configuration_state_constraints( ...
+        Z_Bounds.Invalid_SCR_States, ...
+        Z_Bounds.State_Catalog.SynchronousStates, ...
+        Lambda_Configuration, u_SG_SCR)];
+end
 
 SCR_Diagonal_Indices = sub2ind([NS,NGFL], ...
     GFL_Reduced_Indices,(1:NGFL).');
 % 式(23)采用GFL-WG场站额定功率，不使用逐时可用出力或实际出力。
 PN_GFL_Rated_PU_Node = CONF.PN_GFL_pu_Node;
 PN_GFL_Rated_PU = PN_GFL_Rated_PU_Node(GFL_Original_Nodes);
-for d = 1:D
-    Z_SCR_Imag_d = Z_SCR_Imag(:,:,d);
+if Enable_SCR
+    for d = 1:D
+        Z_SCR_Imag_d = Z_SCR_Imag(:,:,d);
 
-    X_Diag_SCR_d = Z_SCR_Imag_d(SCR_Diagonal_Indices);
-    X_Diag_SCR = [X_Diag_SCR, X_Diag_SCR_d]; %#ok<AGROW>
+        X_Diag_SCR_d = Z_SCR_Imag_d(SCR_Diagonal_Indices);
+        X_Diag_SCR = [X_Diag_SCR, X_Diag_SCR_d]; %#ok<AGROW>
 
-    % Manuscript式(23)及Appendix-A：典型日交集状态的经典SCR下界。
-    C_SCR = [C_SCR, add_classic_scr_constraints( ...
-        CONF, ones(NGFL,1), X_Diag_SCR_d, PN_GFL_Rated_PU)];
+        % Manuscript式(23)及Appendix-A：典型日交集状态的经典SCR下界。
+        C_SCR = [C_SCR, add_classic_scr_constraints( ...
+            CONF, ones(NGFL,1), X_Diag_SCR_d, PN_GFL_Rated_PU)];
 
-    % 文档未单列公式：保留现有安全网络电压源在线约束。
-    if CONF.Require_Source_Online
-        C_SCR = [C_SCR, sum(u_SG_SCR(:,d)) + sum(u_GFM_Module_Table) >= 1];
+        % 文档未单列公式：保留现有安全网络电压源在线约束。
+        if CONF.Require_Source_Online
+            C_SCR = [C_SCR, ...
+                sum(u_SG_SCR(:,d)) + sum(u_GFM_Module_Table) >= 1];
+        end
     end
 end
 
@@ -545,7 +626,7 @@ end
 % 目标函数辅助约束先行，随后按Section III运行约束与Section II安全约束装配。
 C = [C_Cost, C_Plan, C_Power_Flow, C_UC, C_GFM_ES, ...
     C_Aggregate, C_Impedance_SCC, C_Impedance_SCR, C_LVRT, ...
-    C_Fault_Transfer, C_SCC, C_SCR, C_McCormick];
+    C_Fault_Transfer, C_Security_Applicability, C_SCC, C_SCR, C_McCormick];
 
 % 式(24)的GFM-ES年固定成本已包含年化投资和固定运维，各模块仅计一次。
 Cost_GFM_Fixed = GFM_Module_Cost_Conv'*u_GFM_Module_Table;
@@ -553,25 +634,34 @@ Cost_Total_Annual = Cost_GEN + Cost_GFM_Fixed + Cost_Curt + Cost_UC;
 Objective = Cost_Total_Annual/CONF.ObjectiveScale;
 
 %% 6. 调用求解器
-% 求解器参数由build_copt_options统一设置。
-ops = build_copt_options(CONF.Solver);
+% 求解器名称与原生选项均从CONF.solver读取。
+Solver_Select = CONF.solver.name;
+ops = build_multiple_snapshot_solver_options( ...
+    CONF.solver, isfield(CONF, 'MIPStart'));
 if isfield(CONF, 'MIPStart')
     assign(u_SG, CONF.MIPStart.u_G);
     assign(u_SG_Start, CONF.MIPStart.u_G_Start);
     assign(u_SG_Stop, CONF.MIPStart.u_G_Stop);
     assign(u_SG_SCC, CONF.MIPStart.u_G_SCC);
     assign(u_SG_SCR, CONF.MIPStart.u_G_SCR);
+    if Enable_SCC
+        [~,Union_Start_Index] = ismember( ...
+            round(CONF.MIPStart.u_G_SCC).',Union_State_Table,'rows');
+        if any(Union_Start_Index == 0)
+            error('MIPStart的SCC并集状态不在离线状态目录中。');
+        end
+        Union_Start = zeros(S_Union,D);
+        Union_Start(sub2ind([S_Union,D], ...
+            Union_Start_Index(:).',(1:D))) = 1;
+        assign(z_SG_Union,Union_Start);
+    end
     assign(u_GFM_Module, CONF.MIPStart.u_GFM_Mod);
     assign(u_GFM_Ch, CONF.MIPStart.u_GFM_Ch);
-    ops.usex0 = 1;
-    ops.warmstart = 1;
-    % 当前MIP start仅初始化部分变量；COPT需要启用子MIP补全部分初始解。
-    ops.copt.MipStartMode = 2;
+
 end
-sol = optimize(C, Objective, ops);
 COPT_Log_Source = '';
 Results_Directory = '';
-if ops.verbose > 0
+if strcmp(Solver_Select, 'copt') && ops.verbose > 0
     % YALMIP的COPT适配器将日志写到当前目录下的copt.log。
     COPT_Log_Source = fullfile(pwd, 'copt.log');
     Project_Root = fileparts(fileparts(fileparts(fileparts(mfilename('fullpath')))));
@@ -580,6 +670,7 @@ if ops.verbose > 0
         mkdir(Results_Directory);
     end
 end
+sol = optimize(C, Objective, ops);
 if ~isempty(COPT_Log_Source) && isfile(COPT_Log_Source)
     % 将YALMIP在当前目录生成的COPT日志归档到项目results目录。
     COPT_Log_Destination = fullfile(Results_Directory, 'copt.log');
@@ -594,9 +685,49 @@ end
 
 %% 7. 提取优化结果
 Diagnostics = build_multiple_snapshot_diagnostics(sol);
+% 标量变量数包含二进制变量，二进制变量数为其子集；约束数按标量分量计。
+Model_Variable_Ids = getvariables(allvariables(C,Objective));
+Binary_Variables = [u_SG(:); u_SG_Start(:); u_SG_Stop(:); ...
+    u_GFM_Module(:); Lambda_Configuration(:); u_GFM_Ch(:); ...
+    u_SG_SCC(:); u_SG_SCR(:); z_SG_Union(:); ...
+    Delta_F_0(:); Delta_F_Lin(:); Delta_F_Sat(:)];
+Diagnostics.Scalar_Variable_Count = numel(Model_Variable_Ids);
+Diagnostics.Binary_Variable_Count = numel(intersect( ...
+    Model_Variable_Ids,getvariables(Binary_Variables)));
+Constraint_Model = struct(C);
+Constraint_Clauses = Constraint_Model.clauses{1};
+Diagnostics.Scalar_Constraint_Count = 0;
+for Constraint_Index = 1:numel(Constraint_Clauses)
+    Diagnostics.Scalar_Constraint_Count = ...
+        Diagnostics.Scalar_Constraint_Count + ...
+        numel(Constraint_Clauses{Constraint_Index}.data);
+end
 Diagnostics.objective_scale = CONF.ObjectiveScale;
+% 部分YALMIP后端不返回目标值字段；有可行解时从已求解模型补齐。
+if Diagnostics.has_incumbent && ~isfinite(Diagnostics.objective)
+    Objective_Value = value(Objective);
+    if isscalar(Objective_Value) && isfinite(Objective_Value)
+        Diagnostics.objective = Objective_Value;
+    end
+end
+
 Diagnostics.objective = Diagnostics.objective*CONF.ObjectiveScale;
 Diagnostics.best_bound = Diagnostics.best_bound*CONF.ObjectiveScale;
+% 求解器未返回MIP gap时，根据incumbent和best bound计算相对gap。
+if Diagnostics.has_incumbent && ~isfinite(Diagnostics.mip_gap) && ...
+        isfinite(Diagnostics.objective) && isfinite(Diagnostics.best_bound)
+    Gap_Scale = max(abs(Diagnostics.objective), abs(Diagnostics.best_bound));
+    if Gap_Scale > 0
+        Diagnostics.mip_gap = abs(Diagnostics.objective - ...
+            Diagnostics.best_bound)/Gap_Scale;
+    elseif Diagnostics.objective == Diagnostics.best_bound
+        Diagnostics.mip_gap = 0;
+    else
+        Diagnostics.mip_gap = Inf;
+    end
+end
+
+Diagnostics.SecurityConstraintAssembly = Security_Constraint_Assembly;
 
 if sol.problem == 0
     disp('Solver converged successfully.');
@@ -628,41 +759,93 @@ Value_u_G_Start = value(u_SG_Start);
 Value_u_G_Stop = value(u_SG_Stop);
 
 Value_u_GFL = u_GFL;
-Value_u_G_SCC = value(u_SG_SCC);
-Value_u_G_SCR = value(u_SG_SCR);
+% 聚合状态统一由最终逐时SG状态复算；关闭约束时不读取未装配辅助变量。
+Value_u_G_SCC = max(round(Value_u_G),[],3);
+Value_u_G_SCR = min(round(Value_u_G),[],3);
 Value_u_GFM_Module = value(u_GFM_Module);
 Value_u_GFM_Ch = value(u_GFM_Ch);
 Value_Lambda_Configuration = value(Lambda_Configuration);
 Diagnostics.ConfigurationSelection = Value_Lambda_Configuration;
 Diagnostics.ConfigurationAllowed = Z_Bounds.Configuration_Allowed;
 
-% 阻抗矩阵在模型中经过CONF.KZ缩放，输出时还原到原始标幺尺度。
-Z_SCC_Val = value(Z_SCC_Real)/CONF.KZ + 1i*value(Z_SCC_Imag)/CONF.KZ;
-Z_SCR_Val = value(Z_SCR_Real)/CONF.KZ + 1i*value(Z_SCR_Imag)/CONF.KZ;
-
-X_Diag_SCR_Val = value(X_Diag_SCR)/CONF.KZ;
-SCR = zeros(N,D);
-for d = 1:D
-    SCR(GFL_Original_Nodes,d) = calculate_classic_scr( ...
-        X_Diag_SCR_Val(:,d),ones(NGFL,1),PN_GFL_Rated_PU);
+%% 8. 保存已启用约束的优化内指标，用于默认模型后验回归核对
+Value_u_GFM_Module_Table = Value_u_GFM_Module(Module_Linear_Index);
+SCC_Optimization = [];
+SCR_Optimization = [];
+Z_SCC_Optimization = [];
+Z_SCR_Optimization = [];
+if Enable_SCC
+    Z_SCC_Optimization = value(Z_SCC_Real)/CONF.KZ + ...
+        1i*value(Z_SCC_Imag)/CONF.KZ;
+    Value_Phi_GFL = value(Phi_GFL);
+    [~, SCC_Optimization, ~] = calculate_short_circuit_currents( ...
+        NET, CONF, Value_u_GFM_Module_Table, u_GFL, Value_u_G_SCC, ...
+        Z_SCC_Optimization, Value_Phi_GFL, false);
+end
+if Enable_SCR
+    Z_SCR_Optimization = value(Z_SCR_Real)/CONF.KZ + ...
+        1i*value(Z_SCR_Imag)/CONF.KZ;
+    X_Diag_SCR_Val = value(X_Diag_SCR)/CONF.KZ;
+    SCR_Optimization = zeros(N,D);
+    for d = 1:D
+        SCR_Optimization(GFL_Original_Nodes,d) = calculate_classic_scr( ...
+            X_Diag_SCR_Val(:,d),ones(NGFL,1),PN_GFL_Rated_PU);
+    end
 end
 
-%% 8. 计算短路电流指标
-% SCC_1为典型日SG并集工况的聚合保守上界。旧SCC_0/SCC_2接口保留，
-% 但本结果路径不再计算或保存；实际逐时后验结果在下一段独立重构。
-Value_u_GFM_Module_Table = Value_u_GFM_Module(Module_Linear_Index);
-Value_Phi_GFL = value(Phi_GFL);
-[SCC_0, SCC_1, SCC_2] = calculate_short_circuit_currents( ...
-    NET, CONF, Value_u_GFM_Module_Table, u_GFL, Value_u_G_SCC, ...
-    Z_SCC_Val, Value_Phi_GFL, false);
+%% 9. 基于最终投建方案和实际逐时SG状态进行统一后验复算
+% 关闭SCC时，离线转移界仅在求解完成后计算，不参与规划可行域。
+SCC_Posthoc_Bounds = Z_Bounds;
+SCC_Bounds_Failure = '';
+if ~Enable_SCC
+    try
+        SCC_Posthoc_Bounds = calculate_impedance_bounds( ...
+            NET, CONF, true, false);
+    catch Cause
+        SCC_Posthoc_Bounds = [];
+        SCC_Bounds_Failure = sprintf('%s: %s',Cause.identifier,Cause.message);
+    end
+end
+[SCC_1, SCR, Z_SCC_Val, Z_SCR_Val, Aggregated_Status] = ...
+    calculate_aggregated_security_metrics( ...
+    NET, CONF, Value_u_GFM_Module_Table, u_GFL, Value_u_G, ...
+    SCC_Posthoc_Bounds, SCC_Bounds_Failure);
 
-%% 9. 基于最终投建方案和实际逐时SG状态进行独立安全指标复算
-% 本步骤不读取SCC/SCR约束辅助变量，因此与优化模型是否启用相应安全
-% 约束无关。逐时数组顺序为[时段,典型日,安全节点]。
-[SCC_TimeResolved, SCR_TimeResolved] = ...
+% 逐时复算严格使用最终实际逐时SG状态，不以并集或交集替代。
+[SCC_TimeResolved, SCR_TimeResolved, TimeResolved_Status] = ...
     calculate_time_resolved_security_metrics( ...
     NET, CONF, Value_u_GFM_Module_Table, u_GFL, Value_u_G);
 SecurityValidation = check_aggregated_security_conservatism( ...
-    SCC_1, SCR, SCC_TimeResolved, SCR_TimeResolved, CONF);
+    SCC_1, SCR, SCC_TimeResolved, SCR_TimeResolved, CONF, ...
+    Aggregated_Status, TimeResolved_Status);
+SecurityValidation.ConstraintAssembly = Security_Constraint_Assembly;
 
+Diagnostics.SecurityPosthocRegression = struct();
+if Enable_SCC
+    Diagnostics.SecurityPosthocRegression.SCC_MaxAbsDifference_kA = ...
+        finite_max_abs_difference(SCC_1,SCC_Optimization);
+    Diagnostics.SecurityPosthocRegression.Z_SCC_MaxAbsDifference_pu = ...
+        finite_max_abs_difference(Z_SCC_Val,Z_SCC_Optimization);
+end
+if Enable_SCR
+    Diagnostics.SecurityPosthocRegression.SCR_MaxAbsDifference = ...
+        finite_max_abs_difference(SCR,SCR_Optimization);
+    Diagnostics.SecurityPosthocRegression.Z_SCR_MaxAbsDifference_pu = ...
+        finite_max_abs_difference(Z_SCR_Val,Z_SCR_Optimization);
+end
+
+% 旧接口保留，但精简Result路径不再计算或保存SCC_0/SCC_2。
+SCC_0 = [];
+SCC_2 = [];
+
+end
+
+function Maximum = finite_max_abs_difference(A,B)
+Difference = abs(A-B);
+Difference = Difference(isfinite(Difference));
+if isempty(Difference)
+    Maximum = NaN;
+else
+    Maximum = max(Difference);
+end
 end

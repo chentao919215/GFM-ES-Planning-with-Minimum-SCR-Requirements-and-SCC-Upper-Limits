@@ -4,6 +4,11 @@ function CONF = normalize_multiple_snapshot_conf(CONF)
 % 不会改变调用方持有的分组结构。
 
 if ~isfield(CONF, 'Network')
+    if isfield(CONF, 'solver')
+        CONF.solver = normalize_solver_configuration(CONF.solver);
+    end
+    CONF.Enable_SCC = read_optional_logical_scalar(CONF, 'Enable_SCC', true);
+    CONF.Enable_SCR = read_optional_logical_scalar(CONF, 'Enable_SCR', true);
     return;
 end
 
@@ -98,6 +103,8 @@ runtime.SCC_Constraint_Original_Nodes = SEC.SCC_Nodes_Original;
 runtime.I_limit_kA_Node = SEC.I_limit_kA;
 runtime.I_limit = SEC.I_limit_pu;
 runtime.SCR_min = SEC.SCR_min;
+runtime.Enable_SCC = read_optional_logical_scalar(SEC, 'Enable_SCC', true);
+runtime.Enable_SCR = read_optional_logical_scalar(SEC, 'Enable_SCR', true);
 runtime.KZ = SOLVER.KZ;
 runtime.ERR_TOL = SOLVER.ERR_TOL;
 runtime.ZBoundMargin = SOLVER.Z_Bound_Margin;
@@ -127,11 +134,12 @@ runtime.Gen_Min_Down_Periods = UC.Min_Down_Periods;
 runtime.Gen_Startup_Cost = UC.Startup_Cost;
 runtime.Gen_Shutdown_Cost = UC.Shutdown_Cost;
 
-runtime.Solver = build_internal_solver_conf(SOLVER);
+runtime.solver = normalize_solver_configuration(CONF.solver);
 runtime.ObjectiveScale = SOLVER.Objective_Scale;
 if isfield(SOLVER, 'Solve_Stage')
     runtime.SolveStage = SOLVER.Solve_Stage;
 end
+
 if isfield(SOLVER, 'MIP_Start')
     runtime.MIPStart = SOLVER.MIP_Start;
 end
@@ -140,18 +148,48 @@ CONF = runtime;
 
 end
 
-function Solver_Internal = build_internal_solver_conf(Solver_Public)
-%% 将公开的下划线命名求解器字段映射为Gurobi字段名。
+function Solver = normalize_solver_configuration(Solver)
+%% Validate backend selection while preserving native option names.
 
-Solver_Internal = struct();
-Solver_Internal.Threads = Solver_Public.Threads;
-Solver_Internal.Heuristics = Solver_Public.Heuristics;
-Solver_Internal.MIPGap = Solver_Public.MIP_Gap;
-Solver_Internal.TimeLimit = Solver_Public.Time_Limit;
-Solver_Internal.MIPFocus = Solver_Public.MIP_Focus;
-Solver_Internal.NoRelHeurWork = Solver_Public.No_Rel_Heur_Work;
-if isfield(Solver_Public, 'Concurrent_MIP')
-    Solver_Internal.ConcurrentMIP = Solver_Public.Concurrent_MIP;
+if ~isstruct(Solver) || ~isfield(Solver, 'name') || ...
+        ~isfield(Solver, 'options') || ~isstruct(Solver.options)
+    error('MultipleSnapshotConfig:InvalidSolverConfiguration', ...
+        'solver must define name and options fields.');
+end
+
+Solver_Name = Solver.name;
+if isstring(Solver_Name) && isscalar(Solver_Name)
+    Solver_Name = char(Solver_Name);
+end
+if ~ischar(Solver_Name) || ~isrow(Solver_Name)
+    error('MultipleSnapshotConfig:InvalidSolverName', ...
+        'solver.name must be Gurobi or COPT.');
+end
+Solver_Name = lower(strtrim(Solver_Name));
+if ~any(strcmp(Solver_Name, {'gurobi','copt'}))
+    error('MultipleSnapshotConfig:InvalidSolverName', ...
+        'solver.name must be Gurobi or COPT.');
+end
+if ~isfield(Solver.options, Solver_Name) || ...
+        ~isstruct(Solver.options.(Solver_Name))
+    error('MultipleSnapshotConfig:MissingSolverOptions', ...
+        'solver.options must contain a native options struct for %s.', ...
+        Solver_Name);
+end
+Solver.name = Solver_Name;
+
+end
+function Value = read_optional_logical_scalar(Input, Field_Name, Default_Value)
+%% 统一旧版CONF兼容默认值与逻辑标量校验。
+
+if ~isfield(Input,Field_Name)
+    Value = Default_Value;
+    return;
+end
+Value = Input.(Field_Name);
+if ~islogical(Value) || ~isscalar(Value)
+    error('MultipleSnapshotConfig:InvalidLogicalSwitch', ...
+        '%s必须为标量逻辑值true或false。',Field_Name);
 end
 
 end

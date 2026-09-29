@@ -25,10 +25,8 @@ params.Network.Branch_Scale = struct( ...
     'r', 1, ...
     'x', 7/4, ...
     'b', 1);
-% Xd_Gen先按设备基准输入，再换算为系统基准。
-x_Gen_Device = 0.10 * ones(size(mpc.gen, 1), 1);
-params.Network.Xd_Gen = x_Gen_Device .* params.Network.Base_MVA ./ ...
-    mpc.gen(:, 9);
+% 所有SG次暂态电抗直接按系统基准给定，不再由机组容量基准换算。
+params.Network.Xd_Gen = 0.10 * ones(size(mpc.gen, 1), 1);
 params.Network.Gen_Cost_Breakpoints = 0:0.1:1;
 
 %% 2. GFL_WG
@@ -55,23 +53,21 @@ params.GFM_Modules.Configurations.Enforce_Sequential_Build = true;
 params.GFM_Modules.Configurations.N_Module_Max = 4;
 
 params.GFM_Modules.Candidates = struct();
-params.GFM_Modules.Candidates.Bus = [9, 15, 19];
+params.GFM_Modules.Candidates.Bus = [6, 10, 16];
 
 params.GFM_Modules.Module = struct();
-params.GFM_Modules.Module.Bus = [9, 9, 15, 15, 19, 19];
+params.GFM_Modules.Module.Bus = [6, 6, 10, 10, 16 16];
 params.GFM_Modules.Module.Module_Index = [1, 2, 1, 2, 1, 2];
-params.GFM_Modules.Module.PN_MW = [30, 30, 30, 30, 30, 30];
+params.GFM_Modules.Module.PN_MW = 30*ones(1,6);
 
 params.GFM_Modules.Costs = struct();
 % Manuscript Section IV-A：以下两项均为包含年化投资和固定运维的年固定成本。
-params.GFM_Modules.Costs.Annual_Cost_Power_per_MW = ...
-    [12390, 12390, 12390, 12390, 12390, 12390];
-params.GFM_Modules.Costs.Annual_Cost_Energy_per_MWh = ...
-    [37120, 37120, 37120, 37120, 37120, 37120];
+params.GFM_Modules.Costs.Annual_Cost_Power_per_MW   = 12390*ones(1,6);
+params.GFM_Modules.Costs.Annual_Cost_Energy_per_MWh = 37120*ones(1,6);
 
 params.GFM_Modules.Storage = struct();
 params.GFM_Modules.Storage.Rated_Energy_MWh = ...
-    2 * params.GFM_Modules.Module.PN_MW;
+    2*params.GFM_Modules.Module.PN_MW;
 params.GFM_Modules.Storage.Charge_Efficiency = 0.9;
 params.GFM_Modules.Storage.Discharge_Efficiency = 0.9;
 params.GFM_Modules.Storage.SOC_Max = 0.9;
@@ -79,9 +75,9 @@ params.GFM_Modules.Storage.SOC_Initial = 0.5;
 params.GFM_Modules.Storage.SOC_Min = 0.1;
 
 params.GFM_Modules.Electrical = struct();
-params.GFM_Modules.Electrical.I_Post_Multiplier = [1.5, 1.5, 1.5, 1.5, 1.5, 1.5];
+params.GFM_Modules.Electrical.I_Post_Multiplier = 1.5*ones(1,6);
 % X_GFM_Res先按设备基准输入，再换算为系统基准。
-x_GFM_Res_Device = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1];
+x_GFM_Res_Device = 0.05*ones(1,6);
 params.GFM_Modules.Electrical.X_GFM_Vir = ...
     (1 ./ params.GFM_Modules.Electrical.I_Post_Multiplier - ...
     x_GFM_Res_Device) .* params.Network.Base_MVA ./ ...
@@ -93,8 +89,10 @@ params.GFM_Modules.Electrical.X_GFM_Res = ...
 %% 4. Security
 % 短路电流上限、SCR下限及源在线约束。
 params.Security = struct();
-params.Security.I_limit_kA = 6.25; % kA
-params.Security.SCR_min = 3;
+params.Security.Enable_SCC = true;
+params.Security.Enable_SCR = true;
+params.Security.I_limit_kA = 5.7; % kA
+params.Security.SCR_min = 2.8;
 params.Security.Require_Source_Online = true;
 
 %% 5. Multiple_Snapshot
@@ -218,33 +216,73 @@ params.UC.Startup_Cost = 0.5 * Gen_Cost_Full_Load;
 params.UC.Shutdown_Cost = 0.05 * Gen_Cost_Full_Load;
 
 %% 7. Solver
-% 数值稳定性、Gurobi性能及两阶段求解参数。
+% 数值稳定性、求解性能及两阶段求解参数。
 params.Solver = struct();
 params.Solver.KZ = 1e3;
 params.Solver.Z_Bound_Margin = 0.005;
 params.Solver.ERR_TOL_Factor = 1e-6;
-params.Solver.Threads = 0;
-params.Solver.MIP_Gap = 0.005;
-params.Solver.Time_Limit = 600;
-params.Solver.MIP_Focus = 1;
-params.Solver.Heuristics = 0.2;
-params.Solver.No_Rel_Heur_Work = 0;
+params.Solver.MIP_Gap = 0.005; % 两阶段流程的共同目标间隙，仅用于流程判断
 params.Solver.Objective_Scale = 1e5;
 params.Solver.Two_Stage = struct();
 params.Solver.Two_Stage.Enabled = true;
-params.Solver.Two_Stage.Stage_1 = struct( ...
-    'Name', 'feasible-search', ...
-    'Time_Limit', 300, ...
-    'MIP_Gap', 0.3, ...
-    'MIP_Focus', 1, ...
-    'Heuristics', 0.2);
-params.Solver.Two_Stage.Stage_2 = struct( ...
-    'Name', 'optimality-proof', ...
-    'Time_Limit', 1800, ...
-    'MIP_Gap', 0.005, ...
-    'MIP_Focus', 3, ...
-    'Heuristics', 0.01, ...
-    'Concurrent_MIP', 2);
+params.Solver.Two_Stage.Stage_1 = struct('Name', 'feasible-search', ...
+    'Time_Limit', 300, 'MIP_Gap', 0.3);
+params.Solver.Two_Stage.Stage_2 = struct('Name', 'optimality-proof', ...
+    'Time_Limit', 1800, 'MIP_Gap', 0.005);
+
+% 求解器选择及其原生参数分别配置；不在后端之间转换参数名称或含义。
+params.solver = struct();
+params.solver.name = 'gurobi'; % 可选 'gurobi' 或 'copt'
+params.solver.options = struct();
+params.solver.options.yalmip = struct('verbose', 2, 'savesolveroutput', 1);
+
+% Gurobi专属选项。
+params.solver.options.gurobi = struct();
+params.solver.options.gurobi.Threads = 0;
+params.solver.options.gurobi.MIPGap = 0.005;
+params.solver.options.gurobi.TimeLimit = 600;
+params.solver.options.gurobi.MIPFocus = 1;
+params.solver.options.gurobi.Heuristics = 0.2;
+params.solver.options.gurobi.NoRelHeurWork = 0;
+params.solver.options.gurobi.DisplayInterval = 1;
+params.solver.options.gurobi.OutputFlag = 1;
+params.solver.options.gurobi.LogToConsole = 1;
+params.solver.options.gurobi.LogFile = fullfile('results', 'gurobi_run.log');
+
+% COPT专属选项。
+params.solver.options.copt = struct();
+params.solver.options.copt.Threads = 14;
+params.solver.options.copt.RelGap = 0.005;
+params.solver.options.copt.TimeLimit = 600;
+params.solver.options.copt.Logging = 1;
+params.solver.options.copt.LogToConsole = 1;
+
+% 仅在提供MIP start时启用对应的YALMIP/COPT初始解选项。
+params.solver.options.mip_start = struct();
+params.solver.options.mip_start.yalmip = struct('usex0', 1, 'warmstart', 1);
+params.solver.options.mip_start.copt = struct('MipStartMode', 2);
+
+% 长时间后台运行时使用的静默输出选项，仍按各求解器原生名称设置。
+params.solver.options.quiet = struct();
+params.solver.options.quiet.yalmip = struct('verbose', 0);
+params.solver.options.quiet.gurobi = struct( ...
+    'OutputFlag', 0, 'LogToConsole', 0, 'LogFile', '');
+params.solver.options.quiet.copt = struct( ...
+    'Logging', 0, 'LogToConsole', 0);
+
+% 两阶段覆盖也分别以各后端的原生参数定义。
+params.Solver.Two_Stage.Stage_1.Options = struct();
+params.Solver.Two_Stage.Stage_1.Options.gurobi = struct( ...
+    'TimeLimit', 300, 'MIPGap', 0.3, 'MIPFocus', 1, 'Heuristics', 0.2);
+params.Solver.Two_Stage.Stage_1.Options.copt = struct(...
+    'TimeLimit', 900, 'RelGap', 0.3, 'HeurLevel', 2, 'Presolve',2);
+params.Solver.Two_Stage.Stage_2.Options = struct();
+params.Solver.Two_Stage.Stage_2.Options.gurobi = struct( ...
+    'TimeLimit', 1800, 'MIPGap', 0.005, 'MIPFocus', 3, ...
+    'Heuristics', 0.01, 'ConcurrentMIP', 2);
+params.Solver.Two_Stage.Stage_2.Options.copt = struct(...
+    'TimeLimit', 1800, 'RelGap', 0.005, 'HeurLevel', 0, ...
+     'CutLevel',    3, 'Presolve',  2);
 
 %% 8. 写出JSON文件
 JSON_Text = jsonencode(params, 'PrettyPrint', true);
@@ -262,4 +300,4 @@ clear D D_Index Data_Directory K K_Index Selected_D Selected_K T ans fid ...
     Output_File Parameter_Directory params Result RTS_GMLC_Result_File ...
     RTS_GMLC_Run_Directory Scenario_Probabilities Scenario_Row ...
     Typical_Days UC_Generator_Buses Wind_DA_Factor ...
-    Wind_Scenario_Factor Wind_Scenarios x_Gen_Device x_GFM_Res_Device mpc
+    Wind_Scenario_Factor Wind_Scenarios x_GFM_Res_Device mpc

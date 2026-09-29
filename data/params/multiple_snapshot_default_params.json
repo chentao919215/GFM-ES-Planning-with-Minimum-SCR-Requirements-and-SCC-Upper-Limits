@@ -1279,12 +1279,12 @@
       "b": 1
     },
     "Xd_Gen": [
-      0.125,
-      0.125,
-      0.2,
-      0.18181818181818182,
-      0.33333333333333331,
-      0.25
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1
     ],
     "Gen_Cost_Breakpoints": [
       0,
@@ -1318,19 +1318,19 @@
     },
     "Candidates": {
       "Bus": [
-        9,
-        15,
-        19
+        6,
+        10,
+        16
       ]
     },
     "Module": {
       "Bus": [
-        9,
-        9,
-        15,
-        15,
-        19,
-        19
+        6,
+        6,
+        10,
+        10,
+        16,
+        16
       ],
       "Module_Index": [
         1,
@@ -1392,26 +1392,28 @@
         1.5
       ],
       "X_GFM_Vir": [
-        1.8888888888888888,
-        1.8888888888888888,
-        1.8888888888888888,
-        1.8888888888888888,
-        1.8888888888888888,
-        1.8888888888888888
+        2.0555555555555554,
+        2.0555555555555554,
+        2.0555555555555554,
+        2.0555555555555554,
+        2.0555555555555554,
+        2.0555555555555554
       ],
       "X_GFM_Res": [
-        0.33333333333333331,
-        0.33333333333333331,
-        0.33333333333333331,
-        0.33333333333333331,
-        0.33333333333333331,
-        0.33333333333333331
+        0.16666666666666666,
+        0.16666666666666666,
+        0.16666666666666666,
+        0.16666666666666666,
+        0.16666666666666666,
+        0.16666666666666666
       ]
     }
   },
   "Security": {
-    "I_limit_kA": 6.25,
-    "SCR_min": 3,
+    "Enable_SCC": true,
+    "Enable_SCR": true,
+    "I_limit_kA": 5.7,
+    "SCR_min": 2.8,
     "Require_Source_Online": true
   },
   "Multiple_Snapshot": {
@@ -20805,12 +20807,7 @@
     "KZ": 1000,
     "Z_Bound_Margin": 0.005,
     "ERR_TOL_Factor": 1E-6,
-    "Threads": 0,
     "MIP_Gap": 0.005,
-    "Time_Limit": 600,
-    "MIP_Focus": 1,
-    "Heuristics": 0.2,
-    "No_Rel_Heur_Work": 0,
     "Objective_Scale": 100000,
     "Two_Stage": {
       "Enabled": true,
@@ -20818,16 +20815,92 @@
         "Name": "feasible-search",
         "Time_Limit": 300,
         "MIP_Gap": 0.3,
-        "MIP_Focus": 1,
-        "Heuristics": 0.2
+        "Options": {
+          "gurobi": {
+            "TimeLimit": 300,
+            "MIPGap": 0.3,
+            "MIPFocus": 1,
+            "Heuristics": 0.2
+          },
+          "copt": {
+            "TimeLimit": 900,
+            "RelGap": 0.3,
+            "HeurLevel": 2,
+            "Presolve": 2
+          }
+        }
       },
       "Stage_2": {
         "Name": "optimality-proof",
         "Time_Limit": 1800,
         "MIP_Gap": 0.005,
-        "MIP_Focus": 3,
-        "Heuristics": 0.01,
-        "Concurrent_MIP": 2
+        "Options": {
+          "gurobi": {
+            "TimeLimit": 1800,
+            "MIPGap": 0.005,
+            "MIPFocus": 3,
+            "Heuristics": 0.01,
+            "ConcurrentMIP": 2
+          },
+          "copt": {
+            "TimeLimit": 1800,
+            "RelGap": 0.005,
+            "HeurLevel": 0,
+            "CutLevel": 3,
+            "Presolve": 2
+          }
+        }
+      }
+    }
+  },
+  "solver": {
+    "name": "gurobi",
+    "options": {
+      "yalmip": {
+        "verbose": 2,
+        "savesolveroutput": 1
+      },
+      "gurobi": {
+        "Threads": 0,
+        "MIPGap": 0.005,
+        "TimeLimit": 600,
+        "MIPFocus": 1,
+        "Heuristics": 0.2,
+        "NoRelHeurWork": 0,
+        "DisplayInterval": 1,
+        "OutputFlag": 1,
+        "LogToConsole": 1,
+        "LogFile": "results\\gurobi_run.log"
+      },
+      "copt": {
+        "Threads": 14,
+        "RelGap": 0.005,
+        "TimeLimit": 600,
+        "Logging": 1,
+        "LogToConsole": 1
+      },
+      "mip_start": {
+        "yalmip": {
+          "usex0": 1,
+          "warmstart": 1
+        },
+        "copt": {
+          "MipStartMode": 2
+        }
+      },
+      "quiet": {
+        "yalmip": {
+          "verbose": 0
+        },
+        "gurobi": {
+          "OutputFlag": 0,
+          "LogToConsole": 0,
+          "LogFile": ""
+        },
+        "copt": {
+          "Logging": 0,
+          "LogToConsole": 0
+        }
       }
     }
   }

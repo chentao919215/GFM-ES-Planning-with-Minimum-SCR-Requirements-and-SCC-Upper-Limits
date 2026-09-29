@@ -74,6 +74,11 @@ CONF.Delta_I_GFL_pu_Node = Delta_I_GFL_Rated.*CONF.PN_GFL_Node/CONF.Base_MVA;
 % 故障节点饱和增量电流与LVRT饱和段共用Delta_I_GFL参数。
 validate_gfl_lvrt_parameters(CONF, GFL_Built_Nodes);
 
+% 安全阈值开关采用严格逻辑标量；旧版JSON缺少字段时保持完整模型默认值。
+CONF.Enable_SCC = read_optional_logical_scalar( ...
+    params.Security, 'Enable_SCC', true);
+CONF.Enable_SCR = read_optional_logical_scalar( ...
+    params.Security, 'Enable_SCR', true);
 CONF.Require_Source_Online = logical(params.Security.Require_Source_Online);
 
 %% 4. 读取模块化GFM-ES参数
@@ -148,6 +153,7 @@ CONF.ERR_TOL = params.Solver.ERR_TOL_Factor*CONF.KZ;
 CONF.ZBoundMargin = params.Solver.Z_Bound_Margin;
 
 CONF.Solver = params.Solver;
+CONF.solver = params.solver;
 CONF.ObjectiveScale = CONF.Solver.Objective_Scale;
 
 %% 6. 读取典型日与时段参数
@@ -396,6 +402,8 @@ CONF_Public.Security.SCC_Nodes_Count = ...
 CONF_Public.Security.I_limit_kA = CONF.I_limit_kA_Node;
 CONF_Public.Security.I_limit_pu = CONF.I_limit;
 CONF_Public.Security.SCR_min = CONF.SCR_min;
+CONF_Public.Security.Enable_SCC = CONF.Enable_SCC;
+CONF_Public.Security.Enable_SCR = CONF.Enable_SCR;
 CONF_Public.Security.Require_Source_Online = CONF.Require_Source_Online;
 
 multi = params.Multiple_Snapshot;
@@ -454,6 +462,7 @@ CONF_Public.UC.Shutdown_Cost = CONF.Gen_Shutdown_Cost;
 CONF_Public.Solver = build_public_solver_conf( ...
     CONF.Solver, CONF.ObjectiveScale, CONF.KZ, CONF.ERR_TOL, ...
     CONF.ZBoundMargin);
+CONF_Public.solver = CONF.solver;
 
 end
 
@@ -716,6 +725,21 @@ if any(abs(V_Sat-Expected_V_Sat) > 1e-9)
     error(['GFL-WG的V_LVRT_sat必须等于', ...
         'V_LVRT_on-Delta_I_GFL/(K_Q*I_GFL_N)。']);
 end
+end
+
+function Value = read_optional_logical_scalar(Input, Field_Name, Default_Value)
+%% 读取可选逻辑开关，并拒绝数值0/1等非逻辑替代值。
+
+if ~isfield(Input,Field_Name)
+    Value = Default_Value;
+    return;
+end
+Value = Input.(Field_Name);
+if ~islogical(Value) || ~isscalar(Value)
+    error('MultipleSnapshotConfig:InvalidLogicalSwitch', ...
+        'Security.%s必须为标量逻辑值true或false。',Field_Name);
+end
+
 end
 
 function [names, probabilities, Scale_Factors, Available_Scenarios, ...
