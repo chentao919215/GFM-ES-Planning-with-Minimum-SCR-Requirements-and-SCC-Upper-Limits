@@ -1,0 +1,830 @@
+function [SCC_0,SCC_1,SCC_2,Value_P_Line,Value_Theta,Value_P_G,Value_P_GFL,Value_P_GFM,...
+    SCR,Z_SCC_Val,Z_SCR_Val,Value_u_GFL,Value_u_G,Value_u_G_SCC,Value_u_G_SCR,...
+    Value_Cost_CON,Value_Cost_GEN,Value_Cost_Total,Diagnostics,...
+    Value_u_GFM_Module,Value_P_GFM_Dis,Value_P_GFM_Ch,Value_E_GFM,...
+    Value_u_GFM_Ch,Value_P_GFL_Curt,Value_Cost_Curt,...
+    Value_u_G_Start,Value_u_G_Stop,Value_Cost_UC, ...
+    SCC_TimeResolved,SCR_TimeResolved,SecurityValidation] = ...
+    solve_multiple_snapshot_planning_legacy(mpc,CONF)
+%% 构建并求解场景随机多时段模块化GFM-ES配置优化模型
+% GFM-ES投建和同步机组合状态跨风电场景共享，其余运行变量按场景补救。
+% 安全状态仍仅在各典型日内跨时段聚合，安全网络与McCormick变量不带场景维。
+
+CONF = normalize_multiple_snapshot_conf(CONF);
+assert(strcmp(CONF.ModelVersion,'legacy') && CONF.GFM_Config_Count > 0, ...
+    '旧版对照必须通过ModelVersion=legacy加载完整配置目录。');
+Security_Constraint_Assembly = ...
+    build_multiple_snapshot_security_constraint_assembly(CONF);
+Enable_SCC = Security_Constraint_Assembly.Enable_SCC;
+Enable_SCR = Security_Constraint_Assembly.Enable_SCR;
+Need_Intersection_State = ...
+    Security_Constraint_Assembly.Aggregate_Intersection;
+
+%% 1. 整理输入参数
+% u_GFL为已建GFL-WG节点状态，不作为优化变量。
+u_GFL = CONF.u_GFL(:);
+D     = CONF.TypicalDayCount;
+K     = CONF.WindScenarioCount;
+T     = CONF.PeriodCount;
+
+%% 2. 构造网络数据
+% 静态网络矩阵和逐时负荷、GFL-WG可用出力统一由network模块与CONF提供。
+NET = build_multiple_snapshot_network(mpc, CONF);
+
+N = NET.N;
+G = NET.G;
+L = NET.L;
+NS = NET.Safety_N;
+NGFL = NET.Safety_GFL_Count;
+M_GFM = CONF.GFM_Module_Count;
+N_GFM = CONF.GFM_Candidate_Count;
+N_GFM_Module = CONF.GFM_MaxModulesPerCandidate;
+C_Configuration = CONF.GFM_Config_Count;
+Safety_Nodes = NET.Safety_Retained_Nodes;
+GFL_Original_Nodes = NET.Safety_GFL_Original_Nodes;
+GFL_Reduced_Indices = NET.Safety_GFL_Reduced_Indices;
+
+% 候选节点检验与模块序号唯一性校验。
+Module_Bus   = CONF.GFM_Module_Bus(:);
+Module_Order = CONF.GFM_Module_Order(:);
+[~, Candidate_Index] = ismember(Module_Bus, CONF.GFM_Module_Candidates(:));
+Module_Linear_Index  = sub2ind([N_GFM, N_GFM_Module], Candidate_Index, Module_Order);
+Active_Module_Mask = false(N_GFM, N_GFM_Module);
+Active_Module_Mask(Module_Linear_Index) = true;
+
+% 元件-节点关联矩阵。
+Generator_Location_Matrix  = NET.Generator_Location_Matrix;
+GFM_Candidate_Location_Mat = CONF.GFM_Candidate_Loc_Mat;
+GFM_Candidate_Module_Mat   = CONF.GFM_Candidate_Module_Mat;
+Branch_From                = NET.Branch_From;
+Branch_To                  = NET.Branch_To;
+Branch_Matrix_From         = NET.Branch_Matrix_From;
+Branch_Matrix_To           = NET.Branch_Matrix_To;
+
+% 同步机发电成本与出力上下限参数。
+Generator_Cost_Quadratic  = NET.Generator_Cost_Quadratic;
+Generator_Cost_Linear   = NET.Generator_Cost_Linear;
+Generator_Cost_Constant = NET.Generator_Cost_Constant;
+Generator_P_Max = NET.Generator_P_Max;
+Generator_P_Min = NET.Generator_P_Min;
+
+% 同步机UC参数：正常爬坡速率、最小开停机时段数和单次启停成本。
+Gen_Ramp_Up = CONF.Gen_Ramp_Up_MW_per_Hour(:);
+Gen_Ramp_Down = CONF.Gen_Ramp_Down_MW_per_Hour(:);
+Gen_Min_Up = CONF.Gen_Min_Up_Periods(:);
+Gen_Min_Down = CONF.Gen_Min_Down_Periods(:);
+Gen_Startup_Cost = CONF.Gen_Startup_Cost(:);
+Gen_Shutdown_Cost = CONF.Gen_Shutdown_Cost(:);
+
+% 线路、负荷与GFL-WG逐时参数。
+Line_B_Series = NET.Line_B_Series;
+Line_P_Max     = NET.Line_P_Max;
+Line_Limited  = NET.Line_Limited;
+P_Load        = NET.P_Load_Profile;
+P_GFL_Available = NET.P_GFL_Available_Scenarios;
+Scenario_Probability = NET.Wind_Scenario_Probabilities;
+
+% GFM-ES模块参数。
+GFM_Module_PN        = CONF.GFM_Module_PN(:);
+GFM_Module_Energy    = CONF.GFM_Module_Rated_Energy(:);
+GFM_Module_Cost_Conv = CONF.GFM_Module_Cost_Conv(:);
+Delta_Y_Abs_Module       = NET.Delta_Y_Abs_Module;
+
+% 同一候选节点内各模块采用相同的充放电效率和SOC参数。
+GFM_Charge_Efficiency    = CONF.GFM_Candidate_Charge_Efficiency(:);
+GFM_Discharge_Efficiency = CONF.GFM_Candidate_Discharge_Efficiency(:);
+GFM_SOC_Max              = CONF.GFM_Candidate_SOC_Max(:);
+GFM_SOC_Initial          = CONF.GFM_Candidate_SOC_Initial(:);
+GFM_SOC_Min              = CONF.GFM_Candidate_SOC_Min(:);
+
+% 仅为已启用安全关系预处理阻抗界与无效状态目录。双开关关闭时不以
+% 安全网络适用条件筛除任何规划配置。
+if Enable_SCC || Enable_SCR
+    Z_Bounds = calculate_impedance_bounds( ...
+        NET, CONF, Enable_SCC, Enable_SCR);
+else
+    Z_Bounds = struct();
+    Z_Bounds.Configuration_Allowed = true(C_Configuration,1);
+end
+if Enable_SCC
+    Union_State_Table = double(Z_Bounds.State_Catalog.SynchronousStates);
+    S_Union = size(Union_State_Table,1);
+else
+    S_Union = 0;
+end
+
+%% 3. 定义优化变量
+% 逐时二进制变量：同步机运行状态以及启动、停机动作。
+u_SG = binvar(G,D,T,'full');
+u_SG_Start = binvar(G,D,T,'full');
+u_SG_Stop  = binvar(G,D,T,'full');
+
+% 跨典型日和时段共享的GFM-ES模块投建状态。
+u_GFM_Module       = binvar(N_GFM,N_GFM_Module,'full');
+u_GFM_Module_Table = u_GFM_Module(Module_Linear_Index);
+Lambda_Configuration   = binvar(C_Configuration,1,'full');
+
+% 候选节点聚合GFM-ES的逐场景逐时充放电状态，1表示充电，0表示放电。
+% 当充电功率和放电功率均为零时，该状态可取任一值。
+u_GFM_Ch = binvar(N_GFM,D,K,T,'full');
+
+% 每个典型日分别构造安全状态：SCC采用日内并集，SCR采用日内交集。
+u_SG_SCC = binvar(G,D,'full');
+u_SG_SCR = binvar(G,D,'full');
+if Enable_SCC
+    z_SG_Union = binvar(S_Union,D,'full');
+else
+    z_SG_Union = [];
+end
+
+% 场景相关连续运行变量，统一采用[元件,典型日,场景,时段]索引。
+P_SG       = sdpvar(G,D,K,T,'full');
+P_GFL      = sdpvar(N,D,K,T,'full');
+P_GFL_Curt = sdpvar(N,D,K,T,'full');
+P_GFM_Dis  = sdpvar(N_GFM,D,K,T,'full');
+P_GFM_Ch   = sdpvar(N_GFM,D,K,T,'full');
+E_GFM      = sdpvar(N_GFM,D,K,T,'full');
+P_GFM      = sdpvar(N,D,K,T,'full');
+P_SG_Norm  = sdpvar(G,D,K,T,'full');
+theta      = sdpvar(N,D,K,T,'full');
+P_Line     = sdpvar(L,D,K,T,'full');
+
+% 各典型日分别重构安全电抗所需列；SCC需要全部安全节点列，数值上形成
+% 完整矩阵，SCR仅需要GFL-WG节点列。SCC逐典型日显式施加对称性。
+Z_SCC_Real = sdpvar(NS,NS,D,'full');
+Z_SCC_Imag = sdpvar(NS,NS,D,'full');
+Z_SCR_Real = sdpvar(NS,NGFL,D,'full');
+Z_SCR_Imag = sdpvar(NS,NGFL,D,'full');
+
+% Manuscript Section II-C同步机交集工况的残余电压与LVRT反馈变量。
+V_F       = sdpvar(NS,NS,D,'full');
+V_F_0     = sdpvar(NS,NGFL,D,'full');
+V_F_Lin   = sdpvar(NS,NGFL,D,'full');
+V_F_Sat   = sdpvar(NS,NGFL,D,'full');
+Delta_F_0 = binvar(NS,NGFL,D,'full');
+Delta_F_Lin = binvar(NS,NGFL,D,'full');
+Delta_F_Sat = binvar(NS,NGFL,D,'full');
+Delta_I_GFL = sdpvar(NS,NGFL,D,'full');
+Zeta_SG_V = sdpvar(G,NS,NS,D,'full');
+Zeta_GFM_V = sdpvar(M_GFM,NS,NS,D,'full');
+Chi_GFL = sdpvar(C_Configuration,NS,NGFL,D,'full');
+if Enable_SCC
+    Chi_Union_GFL = sdpvar(C_Configuration*S_Union,NS,NGFL,D,'full');
+else
+    Chi_Union_GFL = [];
+end
+
+% 短路电流水平保守上界工况的阻抗重构与SCC辅助变量。
+W_SGZ_X_SCC  = sdpvar(G,NS,D,'full');
+W_SGZ_R_SCC  = sdpvar(G,NS,D,'full');
+W_GFMZ_X_SCC = sdpvar(M_GFM,NS,D,'full');
+W_GFMZ_R_SCC = sdpvar(M_GFM,NS,D,'full');
+W_GFM_SCC    = sdpvar(M_GFM,D,'full');
+
+% 电压支撑强度保守下界工况的阻抗重构辅助变量。
+W_SGZ_X_SCR  = sdpvar(G,NGFL,D,'full');
+W_SGZ_R_SCR  = sdpvar(G,NGFL,D,'full');
+W_GFMZ_X_SCR = sdpvar(M_GFM,NGFL,D,'full');
+W_GFMZ_R_SCR = sdpvar(M_GFM,NGFL,D,'full');
+
+% 同步机逐场景逐时运行成本辅助变量。
+Cost_SG = sdpvar(G,D,K,T,'full');
+
+%% 4. 建立约束
+%% 4.1 规划约束(Manuscript Section III-A，式(25))
+% 可行模块配置离线枚举；以下在线约束选择唯一配置并映射模块投建状态。
+C_Plan = [];
+C_Plan = [C_Plan, u_GFM_Module(~Active_Module_Mask) == 0];
+C_Plan = [C_Plan, sum(u_GFM_Module_Table) <= CONF.N_GFM_Module_Max];
+Configuration_Allowed = logical(Z_Bounds.Configuration_Allowed(:));
+C_Plan = [C_Plan, sum(Lambda_Configuration) == 1, ...
+    Lambda_Configuration(~Configuration_Allowed) == 0, ...
+    u_GFM_Module_Table == CONF.GFM_Config_Module_Matrix.'*Lambda_Configuration];
+
+% Manuscript未单列：由式(25)所选模块状态聚合节点功率、能量与模块数。
+P_GFM_Installed = GFM_Candidate_Module_Mat* ...
+    (GFM_Module_PN.*u_GFM_Module_Table);
+E_GFM_Installed = GFM_Candidate_Module_Mat* ...
+    (GFM_Module_Energy.*u_GFM_Module_Table);
+N_GFM_Installed = GFM_Candidate_Module_Mat*u_GFM_Module_Table;
+P_GFM_Candidate_Upper = GFM_Candidate_Module_Mat*GFM_Module_PN;
+E_GFM_Initial = GFM_SOC_Initial.*E_GFM_Installed;
+
+% 文档未单列公式：保留现有模块顺序约束以减少等价解。
+if CONF.GFM_Module_Sequential
+    Unique_Module_Bus = unique(Module_Bus, 'stable');
+    for k_Bus = 1:numel(Unique_Module_Bus)
+        idx = find(Module_Bus == Unique_Module_Bus(k_Bus));
+        [~, Order_Index] = sort(Module_Order(idx));
+        idx = idx(Order_Index);
+        if numel(idx) > 1
+            C_Plan = [C_Plan, ...
+                u_GFM_Module_Table(idx(1:end-1)) >= u_GFM_Module_Table(idx(2:end))]; %#ok<AGROW>
+        end
+    end
+end
+
+%% 4.2 基础潮流约束(Manuscript Section III-B，式(26)-(27))
+C_Power_Flow = [];
+Ref_Bus_Index = (mpc.bus(:,2) == 3);
+Generator_P_Range = Generator_P_Max - Generator_P_Min;
+Gen_Prange_Inv = spdiags(1./Generator_P_Range,0,G,G);
+
+for d = 1:D
+    for t = 1:T
+        u_SG_d_t = u_SG(:,d,t);
+        for k = 1:K
+            P_SG_d_k_t = P_SG(:,d,k,t);
+            P_GFL_d_k_t = P_GFL(:,d,k,t);
+            P_GFL_Curt_d_k_t = P_GFL_Curt(:,d,k,t);
+            P_GFM_Dis_d_k_t = P_GFM_Dis(:,d,k,t);
+            P_GFM_Ch_d_k_t = P_GFM_Ch(:,d,k,t);
+            P_GFM_d_k_t = P_GFM(:,d,k,t);
+            P_SG_Norm_d_k_t = P_SG_Norm(:,d,k,t);
+            Theta_d_k_t = theta(:,d,k,t);
+            P_Line_d_k_t = P_Line(:,d,k,t);
+
+            % Manuscript Section III-B，式(26)：节点有功功率平衡。
+            P_SG_Node_d_k_t = Generator_Location_Matrix*P_SG_d_k_t;
+            P_Inj_d_k_t = P_SG_Node_d_k_t + P_GFL_d_k_t + P_GFM_d_k_t - P_Load(:,d,t);
+            C_Power_Flow = [C_Power_Flow, P_Inj_d_k_t == ...
+                Branch_Matrix_From*P_Line_d_k_t - Branch_Matrix_To*P_Line_d_k_t];
+
+            % Manuscript Section III-B，式(27)：同步机出力上下限。
+            % 归一化关系供式(24)中的分段透视运行成本使用。
+            C_Power_Flow = [C_Power_Flow, ...
+                P_SG_Norm_d_k_t == Gen_Prange_Inv* ...
+                (P_SG_d_k_t-Generator_P_Min.*u_SG_d_t), ...
+                P_SG_Norm_d_k_t >= 0, P_SG_Norm_d_k_t <= u_SG_d_t];
+
+            % Manuscript Section III-B，式(27)：GFM-ES节点净注入。
+            C_Power_Flow = [C_Power_Flow, ...
+                P_GFM_d_k_t == GFM_Candidate_Location_Mat* ...
+                (P_GFM_Dis_d_k_t-P_GFM_Ch_d_k_t)];
+
+            % Manuscript Section III-B，式(27)：GFL-WG出力与弃风。
+            P_GFL_Available_d_k_t = P_GFL_Available(:,d,k,t).*u_GFL;
+            C_Power_Flow = [C_Power_Flow, ...
+                P_GFL_d_k_t == P_GFL_Available_d_k_t-P_GFL_Curt_d_k_t, ...
+                P_GFL_Curt_d_k_t >= 0, ...
+                P_GFL_Curt_d_k_t >= P_GFL_Available_d_k_t-CONF.PN_GFL_Node, ...
+                P_GFL_Curt_d_k_t <= P_GFL_Available_d_k_t];
+
+            % Manuscript Section III-B：标准无损DC潮流、线路限额与参考相角。
+            Delta_Theta_d_k_t = Theta_d_k_t(Branch_From) - Theta_d_k_t(Branch_To);
+            C_Power_Flow = [C_Power_Flow, ...
+                P_Line_d_k_t == Line_B_Series.*Delta_Theta_d_k_t];
+            if any(Line_Limited)
+                C_Power_Flow = [C_Power_Flow, ...
+                    P_Line_d_k_t(Line_Limited) <= Line_P_Max(Line_Limited), ...
+                    P_Line_d_k_t(Line_Limited) >= -Line_P_Max(Line_Limited)];
+            end
+            C_Power_Flow = [C_Power_Flow, Theta_d_k_t(Ref_Bus_Index) == 0];
+        end
+    end
+end
+
+%% 4.3 电源运行约束
+%% 4.3.1 UC约束(Manuscript Section III-B，式(28)及标准UC约束)
+% SG启停状态在同一典型日内跨风电场景共享。
+C_UC = [];
+for d = 1:D
+    for t = 1:T
+        u_SG_d_t = u_SG(:,d,t);
+        Previous_t = mod(t-2,T)+1;
+        u_SG_Previous = u_SG(:,d,Previous_t);
+        u_SG_Start_d_t = u_SG_Start(:,d,t);
+        u_SG_Stop_d_t = u_SG_Stop(:,d,t);
+        Delta_t = CONF.PeriodDurations_Hours(t);
+        Gen_Startup_Power = min(Generator_P_Max, Generator_P_Min+Gen_Ramp_Up*Delta_t);
+        Gen_Shutdown_Power = min(Generator_P_Max, Generator_P_Min+Gen_Ramp_Down*Delta_t);
+
+        % Manuscript Section III-B，式(28)：启停互斥与循环状态转换。
+        C_UC = [C_UC, ...
+            u_SG_Start_d_t+u_SG_Stop_d_t <= 1, ...
+            u_SG_d_t-u_SG_Previous == u_SG_Start_d_t-u_SG_Stop_d_t];
+
+        % 文档未单列公式：保留现有电压源在线约束，且不随风电场景复制。
+        if CONF.Require_Source_Online
+            C_UC = [C_UC, ...
+                sum(u_SG_d_t) + sum(u_GFM_Module_Table) >= 1];
+        end
+
+        % Manuscript Section III-B引用的标准UC约束：逐场景同步机爬坡。
+        for k = 1:K
+            P_SG_d_k_t = P_SG(:,d,k,t);
+            P_SG_Previous = P_SG(:,d,k,Previous_t);
+            C_UC = [C_UC, ...
+                P_SG_d_k_t-P_SG_Previous <= Gen_Ramp_Up*Delta_t.*u_SG_Previous + ...
+                    Gen_Startup_Power.*u_SG_Start_d_t, ...
+                P_SG_Previous-P_SG_d_k_t <= Gen_Ramp_Down*Delta_t.*u_SG_d_t + ...
+                    Gen_Shutdown_Power.*u_SG_Stop_d_t];
+        end
+    end
+
+    % Manuscript Section III-B引用的标准UC约束：循环最小开、停机时间。
+    for g = 1:G
+        for t = 1:T
+            Up_Window = mod((t-Gen_Min_Up(g)+1:t)-1,T)+1;
+            Down_Window = mod((t-Gen_Min_Down(g)+1:t)-1,T)+1;
+            C_UC = [C_UC, ...
+                sum(reshape(u_SG_Start(g,d,Up_Window),[],1)) <= u_SG(g,d,t), ...
+                sum(reshape(u_SG_Stop(g,d,Down_Window),[],1)) <= 1-u_SG(g,d,t)]; %#ok<AGROW>
+        end
+    end
+end
+
+%% 4.3.2 GFM-ES约束(Manuscript Section III-C，式(29)-(30))
+% 充放电状态与运行变量随风电场景变化，投建状态跨场景共享。
+C_GFM_ES = [];
+for d = 1:D
+    for t = 1:T
+        Delta_t = CONF.PeriodDurations_Hours(t);
+        for k = 1:K
+            P_GFM_Dis_d_k_t = P_GFM_Dis(:,d,k,t);
+            P_GFM_Ch_d_k_t = P_GFM_Ch(:,d,k,t);
+            E_GFM_d_k_t = E_GFM(:,d,k,t);
+            u_GFM_Ch_d_k_t = u_GFM_Ch(:,d,k,t);
+
+            % Manuscript Section III-C，式(29)：功率边界与充放电互斥。
+            C_GFM_ES = [C_GFM_ES, ...
+                u_GFM_Ch_d_k_t <= N_GFM_Installed, ...
+                P_GFM_Ch_d_k_t >= 0, P_GFM_Ch_d_k_t <= P_GFM_Installed, ...
+                P_GFM_Ch_d_k_t <= P_GFM_Candidate_Upper.*u_GFM_Ch_d_k_t, ...
+                P_GFM_Dis_d_k_t >= 0, P_GFM_Dis_d_k_t <= P_GFM_Installed, ...
+                P_GFM_Dis_d_k_t <= P_GFM_Candidate_Upper.*(1-u_GFM_Ch_d_k_t)];
+
+            % Manuscript Section III-C，式(30)：能量递推与SOC边界。
+            if t == 1
+                E_GFM_Previous = E_GFM_Initial;
+            else
+                E_GFM_Previous = E_GFM(:,d,k,t-1);
+            end
+            C_GFM_ES = [C_GFM_ES, E_GFM_d_k_t == E_GFM_Previous + ...
+                GFM_Charge_Efficiency.*P_GFM_Ch_d_k_t*Delta_t - ...
+                P_GFM_Dis_d_k_t*Delta_t./GFM_Discharge_Efficiency, ...
+                E_GFM_d_k_t >= GFM_SOC_Min.*E_GFM_Installed, ...
+                E_GFM_d_k_t <= GFM_SOC_Max.*E_GFM_Installed];
+        end
+    end
+
+    % Manuscript Section III-C，式(30)：典型日内首尾能量闭合。
+    for k = 1:K
+        C_GFM_ES = [C_GFM_ES, E_GFM(:,d,k,T) == E_GFM_Initial];
+    end
+end
+
+%% 4.4 安全约束
+%% 4.4.1 聚合安全状态约束(Manuscript Section II-A，式(1)-(2))
+% 安全网络按Section II-B离线降阶；在线约束按典型日构造并集与交集状态。
+C_Aggregate = [];
+for d = 1:D
+    u_SG_Sum_d     = zeros(G,1);
+    u_SG_Off_Sum_d = zeros(G,1);
+    for t = 1:T
+        u_SG_d_t = u_SG(:,d,t);
+        if Enable_SCC
+            C_Aggregate = [C_Aggregate, u_SG_SCC(:,d) >= u_SG_d_t];
+        end
+        if Need_Intersection_State
+            C_Aggregate = [C_Aggregate, u_SG_SCR(:,d) <= u_SG_d_t];
+        end
+        u_SG_Sum_d     = u_SG_Sum_d + u_SG_d_t;
+        u_SG_Off_Sum_d = u_SG_Off_Sum_d + (1-u_SG_d_t);
+    end
+
+    % Manuscript式(1)：典型日同步机状态并集，用于SCC上界。
+    if Enable_SCC
+        C_Aggregate = [C_Aggregate, u_SG_SCC(:,d) <= u_SG_Sum_d, ...
+            sum(z_SG_Union(:,d)) == 1, ...
+            u_SG_SCC(:,d) == Union_State_Table.'*z_SG_Union(:,d)];
+    end
+
+    % Manuscript式(2)：交集状态用于SCC的LVRT反馈或SCR下界。
+    if Need_Intersection_State
+        C_Aggregate = [C_Aggregate, 1-u_SG_SCR(:,d) <= u_SG_Off_Sum_d];
+    end
+end
+
+%% 4.4.2 电抗列重构约束(Manuscript Section II-B，式(3)-(7))
+C_Impedance_SCC = [];
+C_Impedance_SCR = [];
+C_McCormick_Impedance_SCC = [];
+C_McCormick_Impedance_SCR = [];
+for d = 1:D
+    Z_SCC_Real_d = Z_SCC_Real(:,:,d);
+    Z_SCC_Imag_d = Z_SCC_Imag(:,:,d);
+    Z_SCR_Real_d = Z_SCR_Real(:,:,d);
+    Z_SCR_Imag_d = Z_SCR_Imag(:,:,d);
+
+    if Enable_SCC
+        % Manuscript式(6)-(7)：重构SCC所需的全部安全节点电抗列。
+        % 实现保留等价复数变量外壳，安全网络无损时其实部由约束固定为零。
+        C_Impedance_SCC = [C_Impedance_SCC, ...
+            Z_SCC_Real_d == Z_SCC_Real_d.', ...
+            Z_SCC_Imag_d == Z_SCC_Imag_d.'];
+        [C_Impedance_SCC_d, C_McCormick_Impedance_SCC_d] = ...
+            add_impedance_reconstruction_constraints( ...
+            NET, CONF, Z_Bounds.SCC, u_SG_SCC(:,d), u_GFM_Module_Table, ...
+            Z_SCC_Real_d, Z_SCC_Imag_d, W_SGZ_X_SCC(:,:,d), ...
+            W_SGZ_R_SCC(:,:,d), W_GFMZ_X_SCC(:,:,d), ...
+            W_GFMZ_R_SCC(:,:,d), (1:NS).');
+        C_Impedance_SCC = [C_Impedance_SCC, C_Impedance_SCC_d];
+        C_McCormick_Impedance_SCC = [C_McCormick_Impedance_SCC, ...
+            C_McCormick_Impedance_SCC_d];
+    end
+
+    if Enable_SCR
+        % Manuscript式(6)-(7)：仅重构SCR所需的GFL-WG节点电抗列。
+        [C_Impedance_SCR_d, C_McCormick_Impedance_SCR_d] = ...
+            add_impedance_reconstruction_constraints( ...
+            NET, CONF, Z_Bounds.SCR, u_SG_SCR(:,d), u_GFM_Module_Table, ...
+            Z_SCR_Real_d, Z_SCR_Imag_d, W_SGZ_X_SCR(:,:,d), ...
+            W_SGZ_R_SCR(:,:,d), W_GFMZ_X_SCR(:,:,d), ...
+            W_GFMZ_R_SCR(:,:,d), GFL_Reduced_Indices);
+        C_Impedance_SCR = [C_Impedance_SCR, C_Impedance_SCR_d];
+        C_McCormick_Impedance_SCR = [C_McCormick_Impedance_SCR, ...
+            C_McCormick_Impedance_SCR_d];
+    end
+end
+
+%% 4.4.3 GFL-WG故障电压与LVRT增量电流约束(Manuscript Section II-C)
+% 式(13)-(19)及Appendix-B：交集状态残余电压与三段式LVRT；阈值和
+% 饱和增量电流上限在参数加载阶段校验。
+C_LVRT = [];
+C_McCormick_LVRT = [];
+if Enable_SCC
+    [C_LVRT, C_McCormick_LVRT] = add_gfl_lvrt_residual_constraints( ...
+        NET, CONF, u_SG_SCR, u_GFM_Module_Table, V_F, V_F_0, V_F_Lin, ...
+        V_F_Sat, Delta_F_0, Delta_F_Lin, Delta_F_Sat, Delta_I_GFL, ...
+        Zeta_SG_V, Zeta_GFM_V);
+end
+
+%% 4.4.4 SCC上界约束(Manuscript Section II-C，式(15)-(21))
+C_SCC = [];
+C_Fault_Transfer = [];
+C_McCormick_SCC = [];
+Phi_GFL = [];
+
+if Enable_SCC
+    % 式(17)对应离线并集-实际状态枚举；在线排除奇异配置-状态组合。
+    C_SCC = [C_SCC, add_forbidden_state_pair_constraints( ...
+        Z_Bounds.Invalid_State_Pairs, ...
+        Z_Bounds.State_Catalog.SynchronousStates, Lambda_Configuration, ...
+        u_SG_SCC, u_SG)];
+
+    % Manuscript Section III-A：不可用的配置-并集状态对不能被同时选中。
+    for r = 1:size(Z_Bounds.Invalid_Union_States,1)
+        c = Z_Bounds.Invalid_Union_States(r,1);
+        s = Z_Bounds.Invalid_Union_States(r,2);
+        C_SCC = [C_SCC, Lambda_Configuration(c) + ...
+            z_SG_Union(s,:) <= 1]; %#ok<AGROW>
+    end
+
+    % Manuscript式(17)、(20)：先按配置分解LVRT电流，再对所选并集状态
+    % 与各配置分量的乘积施加精确McCormick约束。
+    for d = 1:D
+        for n = 1:NS
+            for GFL_Index = 1:NGFL
+                Delta_I_Upper = CONF.Delta_I_GFL_pu_Node( ...
+                    GFL_Original_Nodes(GFL_Index));
+                Chi_Vec = Chi_GFL(:,n,GFL_Index,d);
+                C_Fault_Transfer = [C_Fault_Transfer, ...
+                    Chi_Vec >= 0, ...
+                    Chi_Vec <= Delta_I_Upper*Lambda_Configuration, ...
+                    sum(Chi_Vec) == Delta_I_GFL(n,GFL_Index,d)]; %#ok<AGROW>
+                for s = 1:S_Union
+                    Pair_Indices = (s-1)*C_Configuration + ...
+                        (1:C_Configuration);
+                    Chi_Union_Vec = Chi_Union_GFL( ...
+                        Pair_Indices,n,GFL_Index,d);
+                    C_Fault_Transfer = [C_Fault_Transfer, ...
+                        Chi_Union_Vec >= 0, ...
+                        Chi_Union_Vec <= Chi_Vec, ...
+                        Chi_Union_Vec <= ...
+                            Delta_I_Upper*z_SG_Union(s,d), ...
+                        Chi_Union_Vec >= Chi_Vec - ...
+                            Delta_I_Upper*(1-z_SG_Union(s,d))]; %#ok<AGROW>
+                end
+            end
+        end
+    end
+
+    u_GFL_Safety = u_GFL(Safety_Nodes);
+    CONF_Safety = CONF;
+    CONF_Safety.GFM_Module_Loc_Mat = NET.Safety_GFM_Module_Location_Matrix;
+    CONF_Safety.I_limit = CONF.I_limit(Safety_Nodes);
+    CONF_Safety.Delta_I_GFL_pu_Node = CONF.Delta_I_GFL_pu_Node(Safety_Nodes);
+    X_Diag_L = diag(Z_Bounds.SCC.Imag_Min);
+    X_Diag_U = diag(Z_Bounds.SCC.Imag_Max);
+
+    for d = 1:D
+        Z_SCC_Imag_d = Z_SCC_Imag(:,:,d);
+        X_Diag_SCC_d = diag(Z_SCC_Imag_d);
+        Phi_GFL_d = [];
+        for n = 1:NS
+            Phi_n = 0;
+            for GFL_Index = 1:NGFL
+                Phi_n = Phi_n + ...
+                    reshape(Z_Bounds.Tau_GFL_Scaled(:,:,n,GFL_Index), ...
+                        C_Configuration*S_Union,1).' * ...
+                    Chi_Union_GFL(:,n,GFL_Index,d);
+            end
+            Phi_GFL_d = [Phi_GFL_d; Phi_n]; %#ok<AGROW>
+        end
+        Phi_GFL = [Phi_GFL, Phi_GFL_d]; %#ok<AGROW>
+
+        % Manuscript式(20)-(21)及Appendix-C：聚合SCC保守上界。
+        [C_SCC_d, C_McCormick_SCC_d] = add_short_circuit_current_constraints( ...
+            CONF_Safety, u_GFL_Safety, u_GFM_Module_Table, W_GFM_SCC(:,d), ...
+            X_Diag_SCC_d, Delta_Y_Abs_Module, X_Diag_L, X_Diag_U, Phi_GFL_d);
+        C_SCC = [C_SCC, C_SCC_d];
+        C_McCormick_SCC = [C_McCormick_SCC, C_McCormick_SCC_d];
+    end
+end
+
+%% 4.4.5 SCR下界约束(Manuscript Section II-D，式(23))
+C_SCR = [];
+X_Diag_SCR = [];
+
+% 无效交集状态同时是SCC-LVRT和SCR的安全网络适用条件；仅在至少一个
+% 指标启用时排除，双关闭时不限制经济性规划可行域。
+C_Security_Applicability = [];
+if Need_Intersection_State
+    C_Security_Applicability = [C_Security_Applicability, ...
+        add_forbidden_configuration_state_constraints( ...
+        Z_Bounds.Invalid_SCR_States, ...
+        Z_Bounds.State_Catalog.SynchronousStates, ...
+        Lambda_Configuration, u_SG_SCR)];
+end
+
+SCR_Diagonal_Indices = sub2ind([NS,NGFL], ...
+    GFL_Reduced_Indices,(1:NGFL).');
+% 式(23)采用GFL-WG场站额定功率，不使用逐时可用出力或实际出力。
+PN_GFL_Rated_PU_Node = CONF.PN_GFL_pu_Node;
+PN_GFL_Rated_PU = PN_GFL_Rated_PU_Node(GFL_Original_Nodes);
+if Enable_SCR
+    for d = 1:D
+        Z_SCR_Imag_d = Z_SCR_Imag(:,:,d);
+
+        X_Diag_SCR_d = Z_SCR_Imag_d(SCR_Diagonal_Indices);
+        X_Diag_SCR = [X_Diag_SCR, X_Diag_SCR_d]; %#ok<AGROW>
+
+        % Manuscript式(23)及Appendix-A：典型日交集状态的经典SCR下界。
+        C_SCR = [C_SCR, add_classic_scr_constraints( ...
+            CONF, ones(NGFL,1), X_Diag_SCR_d, PN_GFL_Rated_PU)];
+
+        % 文档未单列公式：保留现有安全网络电压源在线约束。
+        if CONF.Require_Source_Online
+            C_SCR = [C_SCR, ...
+                sum(u_SG_SCR(:,d)) + sum(u_GFM_Module_Table) >= 1];
+        end
+    end
+end
+
+%% 4.5 McCormick线性化约束(Manuscript Section II-B与II-C)
+% 汇总式(7)、式(18)及式(21)实现中二元变量与有界连续变量的精确乘积。
+C_McCormick = [C_McCormick_Impedance_SCC, ...
+    C_McCormick_Impedance_SCR, C_McCormick_LVRT, C_McCormick_SCC];
+
+%% 5. 构造目标函数(Manuscript Section III-A，式(24))
+% 同步机单位时间运行成本采用归一化出力上的分段透视割近似。
+Gen_Cost_Quad_Norm = Generator_Cost_Quadratic .* (Generator_P_Range.^2);
+Gen_Cost_Lin_Norm = (2.*Generator_Cost_Quadratic.*Generator_P_Min + Generator_Cost_Linear) .* Generator_P_Range;
+Gen_Cost_Const_Norm = Generator_Cost_Quadratic.*(Generator_P_Min.^2) + ...
+    Generator_Cost_Linear.*Generator_P_Min + Generator_Cost_Constant;
+
+C_Cost = [];
+Cost_GEN = 0;
+Cost_Curt = 0;
+Cost_UC = 0;
+for d = 1:D
+    for t = 1:T
+        % 启停动作跨场景共享，按典型日权重计费一次。
+        Cost_UC = Cost_UC + CONF.TypicalDayWeights_Days(d)*( ...
+            Gen_Startup_Cost'*u_SG_Start(:,d,t) + ...
+            Gen_Shutdown_Cost'*u_SG_Stop(:,d,t));
+        for k = 1:K
+            C_Cost = [C_Cost, Cost_SG(:,d,k,t) >= 0];
+            P_SG_Norm_d_k_t = P_SG_Norm(:,d,k,t);
+            for xi = CONF.GenCostBreakpoints(:)'
+                Tangent_Slope = 2.*Gen_Cost_Quad_Norm.*xi + Gen_Cost_Lin_Norm;
+                Tangent_Intercept = Gen_Cost_Const_Norm - Gen_Cost_Quad_Norm.*(xi^2);
+                C_Cost = [C_Cost, Cost_SG(:,d,k,t) >= ...
+                    Tangent_Slope.*P_SG_Norm_d_k_t + ...
+                    Tangent_Intercept.*u_SG(:,d,t)];
+            end
+
+            % 期望运行成本同时乘典型日权重、场景概率和时段持续时间。
+            Expected_Weight = CONF.OperatingWeights_Hours(d,t)* ...
+                Scenario_Probability(d,k);
+            Cost_GEN = Cost_GEN + Expected_Weight*sum(Cost_SG(:,d,k,t));
+            Cost_Curt = Cost_Curt + Expected_Weight* ...
+                CONF.GFL_Curtailment_Cost_per_MWh*sum(P_GFL_Curt(:,d,k,t));
+        end
+    end
+end
+
+% 目标函数辅助约束先行，随后按Section III运行约束与Section II安全约束装配。
+C = [C_Cost, C_Plan, C_Power_Flow, C_UC, C_GFM_ES, ...
+    C_Aggregate, C_Impedance_SCC, C_Impedance_SCR, C_LVRT, ...
+    C_Fault_Transfer, C_Security_Applicability, C_SCC, C_SCR, C_McCormick];
+
+% 式(24)的GFM-ES年固定成本已包含年化投资和固定运维，各模块仅计一次。
+Cost_GFM_Fixed = GFM_Module_Cost_Conv'*u_GFM_Module_Table;
+Cost_Total_Annual = Cost_GEN + Cost_GFM_Fixed + Cost_Curt + Cost_UC;
+Objective = Cost_Total_Annual/CONF.ObjectiveScale;
+
+%% 6. 调用求解器
+% Gurobi原生选项从CONF.solver读取。
+ops = build_multiple_snapshot_solver_options( ...
+    CONF.solver, isfield(CONF, 'MIPStart'));
+if isfield(CONF, 'MIPStart')
+    assign(u_SG, CONF.MIPStart.u_G);
+    assign(u_SG_Start, CONF.MIPStart.u_G_Start);
+    assign(u_SG_Stop, CONF.MIPStart.u_G_Stop);
+    assign(u_SG_SCC, CONF.MIPStart.u_G_SCC);
+    assign(u_SG_SCR, CONF.MIPStart.u_G_SCR);
+    if Enable_SCC
+        [~,Union_Start_Index] = ismember( ...
+            round(CONF.MIPStart.u_G_SCC).',Union_State_Table,'rows');
+        if any(Union_Start_Index == 0)
+            error('MIPStart的SCC并集状态不在离线状态目录中。');
+        end
+        Union_Start = zeros(S_Union,D);
+        Union_Start(sub2ind([S_Union,D], ...
+            Union_Start_Index(:).',(1:D))) = 1;
+        assign(z_SG_Union,Union_Start);
+    end
+    assign(u_GFM_Module, CONF.MIPStart.u_GFM_Mod);
+    assign(u_GFM_Ch, CONF.MIPStart.u_GFM_Ch);
+
+end
+sol = optimize(C, Objective, ops);
+
+%% 7. 提取优化结果
+Diagnostics = build_multiple_snapshot_diagnostics(sol);
+% 标量变量数包含二进制变量，二进制变量数为其子集；约束数按标量分量计。
+Model_Variable_Ids = getvariables(allvariables(C,Objective));
+Binary_Variables = [u_SG(:); u_SG_Start(:); u_SG_Stop(:); ...
+    u_GFM_Module(:); Lambda_Configuration(:); u_GFM_Ch(:); ...
+    u_SG_SCC(:); u_SG_SCR(:); z_SG_Union(:); ...
+    Delta_F_0(:); Delta_F_Lin(:); Delta_F_Sat(:)];
+Diagnostics.Scalar_Variable_Count = numel(Model_Variable_Ids);
+Diagnostics.Binary_Variable_Count = numel(intersect( ...
+    Model_Variable_Ids,getvariables(Binary_Variables)));
+Constraint_Model = struct(C);
+Constraint_Clauses = Constraint_Model.clauses{1};
+Diagnostics.Scalar_Constraint_Count = 0;
+for Constraint_Index = 1:numel(Constraint_Clauses)
+    Diagnostics.Scalar_Constraint_Count = ...
+        Diagnostics.Scalar_Constraint_Count + ...
+        numel(Constraint_Clauses{Constraint_Index}.data);
+end
+Diagnostics.objective_scale = CONF.ObjectiveScale;
+% 部分YALMIP后端不返回目标值字段；有可行解时从已求解模型补齐。
+if Diagnostics.has_incumbent && ~isfinite(Diagnostics.objective)
+    Objective_Value = value(Objective);
+    if isscalar(Objective_Value) && isfinite(Objective_Value)
+        Diagnostics.objective = Objective_Value;
+    end
+end
+
+Diagnostics.objective = Diagnostics.objective*CONF.ObjectiveScale;
+Diagnostics.best_bound = Diagnostics.best_bound*CONF.ObjectiveScale;
+% 求解器未返回MIP gap时，根据incumbent和best bound计算相对gap。
+if Diagnostics.has_incumbent && ~isfinite(Diagnostics.mip_gap) && ...
+        isfinite(Diagnostics.objective) && isfinite(Diagnostics.best_bound)
+    Gap_Scale = max(abs(Diagnostics.objective), abs(Diagnostics.best_bound));
+    if Gap_Scale > 0
+        Diagnostics.mip_gap = abs(Diagnostics.objective - ...
+            Diagnostics.best_bound)/Gap_Scale;
+    elseif Diagnostics.objective == Diagnostics.best_bound
+        Diagnostics.mip_gap = 0;
+    else
+        Diagnostics.mip_gap = Inf;
+    end
+end
+
+Diagnostics.SecurityConstraintAssembly = Security_Constraint_Assembly;
+
+if sol.problem == 0
+    disp('Solver converged successfully.');
+elseif Diagnostics.has_incumbent
+    disp(['Solver stopped with code ' num2str(sol.problem), ...
+        '; the best incumbent will be saved.']);
+else
+    error('Solver stopped with code %d without a feasible incumbent.', sol.problem);
+end
+
+Value_Cost_Total = value(Cost_Total_Annual);
+Value_Cost_GEN = value(Cost_GEN);
+Value_Cost_CON = value(Cost_GFM_Fixed);
+Value_Cost_Curt = value(Cost_Curt);
+Value_Cost_UC = value(Cost_UC);
+
+% 场景相关结果保持[元件,典型日,场景,时段]四维索引结构。
+Value_P_GFL = value(P_GFL);
+Value_P_GFL_Curt = value(P_GFL_Curt);
+Value_P_GFM_Dis = value(P_GFM_Dis);
+Value_P_GFM_Ch = value(P_GFM_Ch);
+Value_E_GFM = value(E_GFM);
+Value_P_GFM = value(P_GFM);
+Value_P_G = value(P_SG);
+Value_Theta = value(theta);
+Value_P_Line = value(P_Line);
+Value_u_G = value(u_SG);
+Value_u_G_Start = value(u_SG_Start);
+Value_u_G_Stop = value(u_SG_Stop);
+
+Value_u_GFL = u_GFL;
+% 聚合状态统一由最终逐时SG状态复算；关闭约束时不读取未装配辅助变量。
+Value_u_G_SCC = max(round(Value_u_G),[],3);
+Value_u_G_SCR = min(round(Value_u_G),[],3);
+Value_u_GFM_Module = value(u_GFM_Module);
+Value_u_GFM_Ch = value(u_GFM_Ch);
+Value_Lambda_Configuration = value(Lambda_Configuration);
+Diagnostics.ConfigurationSelection = Value_Lambda_Configuration;
+Diagnostics.ConfigurationAllowed = Z_Bounds.Configuration_Allowed;
+
+%% 8. 保存已启用约束的优化内指标，用于默认模型后验回归核对
+Value_u_GFM_Module_Table = Value_u_GFM_Module(Module_Linear_Index);
+SCC_Optimization = [];
+SCR_Optimization = [];
+Z_SCC_Optimization = [];
+Z_SCR_Optimization = [];
+if Enable_SCC
+    Z_SCC_Optimization = value(Z_SCC_Real)/CONF.KZ + ...
+        1i*value(Z_SCC_Imag)/CONF.KZ;
+    Value_Phi_GFL = value(Phi_GFL);
+    [~, SCC_Optimization, ~] = calculate_short_circuit_currents( ...
+        NET, CONF, Value_u_GFM_Module_Table, u_GFL, Value_u_G_SCC, ...
+        Z_SCC_Optimization, Value_Phi_GFL, false);
+end
+if Enable_SCR
+    Z_SCR_Optimization = value(Z_SCR_Real)/CONF.KZ + ...
+        1i*value(Z_SCR_Imag)/CONF.KZ;
+    X_Diag_SCR_Val = value(X_Diag_SCR)/CONF.KZ;
+    SCR_Optimization = zeros(N,D);
+    for d = 1:D
+        SCR_Optimization(GFL_Original_Nodes,d) = calculate_classic_scr( ...
+            X_Diag_SCR_Val(:,d),ones(NGFL,1),PN_GFL_Rated_PU);
+    end
+end
+
+%% 9. 基于最终投建方案和实际逐时SG状态进行统一后验复算
+% 关闭SCC时，离线转移界仅在求解完成后计算，不参与规划可行域。
+SCC_Posthoc_Bounds = Z_Bounds;
+SCC_Bounds_Failure = '';
+if ~Enable_SCC
+    try
+        SCC_Posthoc_Bounds = calculate_impedance_bounds( ...
+            NET, CONF, true, false);
+    catch Cause
+        SCC_Posthoc_Bounds = [];
+        SCC_Bounds_Failure = sprintf('%s: %s',Cause.identifier,Cause.message);
+    end
+end
+[SCC_1, SCR, Z_SCC_Val, Z_SCR_Val, Aggregated_Status] = ...
+    calculate_aggregated_security_metrics( ...
+    NET, CONF, Value_u_GFM_Module_Table, u_GFL, Value_u_G, ...
+    SCC_Posthoc_Bounds, SCC_Bounds_Failure);
+
+% 逐时复算严格使用最终实际逐时SG状态，不以并集或交集替代。
+[SCC_TimeResolved, SCR_TimeResolved, TimeResolved_Status] = ...
+    calculate_time_resolved_security_metrics( ...
+    NET, CONF, Value_u_GFM_Module_Table, u_GFL, Value_u_G);
+SecurityValidation = check_aggregated_security_conservatism( ...
+    SCC_1, SCR, SCC_TimeResolved, SCR_TimeResolved, CONF, ...
+    Aggregated_Status, TimeResolved_Status);
+SecurityValidation.ConstraintAssembly = Security_Constraint_Assembly;
+
+Diagnostics.SecurityPosthocRegression = struct();
+if Enable_SCC
+    Diagnostics.SecurityPosthocRegression.SCC_MaxAbsDifference_kA = ...
+        finite_max_abs_difference(SCC_1,SCC_Optimization);
+    Diagnostics.SecurityPosthocRegression.Z_SCC_MaxAbsDifference_pu = ...
+        finite_max_abs_difference(Z_SCC_Val,Z_SCC_Optimization);
+end
+if Enable_SCR
+    Diagnostics.SecurityPosthocRegression.SCR_MaxAbsDifference = ...
+        finite_max_abs_difference(SCR,SCR_Optimization);
+    Diagnostics.SecurityPosthocRegression.Z_SCR_MaxAbsDifference_pu = ...
+        finite_max_abs_difference(Z_SCR_Val,Z_SCR_Optimization);
+end
+
+% 旧接口保留，但精简Result路径不再计算或保存SCC_0/SCC_2。
+SCC_0 = [];
+SCC_2 = [];
+
+end
+
+function Maximum = finite_max_abs_difference(A,B)
+Difference = abs(A-B);
+Difference = Difference(isfinite(Difference));
+if isempty(Difference)
+    Maximum = NaN;
+else
+    Maximum = max(Difference);
+end
+end

@@ -21,4 +21,14 @@ Assembly.Invalid_SCC_State_Pairs = Enable_SCC;
 Assembly.Invalid_Intersection_States = Need_Intersection_State;
 Assembly.Hourly_Source_Online_Base = CONF.Require_Source_Online;
 
+if strcmp(CONF.ModelVersion,'2026-10-23')
+    Assembly.Impedance_SCC = false;
+    Assembly.Fault_Transfer = false;
+    Assembly.Invalid_SCC_State_Pairs = false;
+    Assembly.Invalid_Intersection_States = false;
+    Assembly.Union_Residual_Voltage = Enable_SCC;
+    Assembly.Intersection_Source_Support = Enable_SCC || Enable_SCR;
+    Assembly.Hourly_Postfault_Component_Support = Enable_SCC;
+end
+
 end

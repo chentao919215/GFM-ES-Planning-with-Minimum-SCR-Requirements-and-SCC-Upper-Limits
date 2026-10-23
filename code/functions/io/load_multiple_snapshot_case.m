@@ -16,6 +16,12 @@ mpc.branch(:,5) = Network_Parameters.Branch_Scale.b*mpc.branch(:,5);
 
 %% 2. 构造基础优化配置
 CONF = struct();
+CONF.ModelVersion = '2026-10-23';
+if isfield(params,'ModelVersion')
+    CONF.ModelVersion = char(params.ModelVersion);
+end
+assert(any(strcmp(CONF.ModelVersion,{'2026-10-23','legacy'})), ...
+    'ModelVersion必须为2026-10-23或legacy。');
 
 CONF.Bn = size(mpc.bus,1);
 CONF.Gn = size(mpc.gen,1);
@@ -36,6 +42,9 @@ CONF.GenCostBreakpoints = Network_Parameters.Gen_Cost_Breakpoints(:)';
 
 %% 3. 读取GFL-WG参数
 GFL_Parameters = params.GFL_WG;
+if strcmp(CONF.ModelVersion,'2026-10-23')
+    GFL_Parameters = aggregate_gfl_node_parameters(GFL_Parameters,CONF.Bn);
+end
 GFL_Built_Nodes = GFL_Parameters.Built_Nodes(:);
 CONF.u_GFL = zeros(CONF.Bn,1);
 CONF.u_GFL(GFL_Built_Nodes) = 1;
@@ -51,7 +60,7 @@ end
 CONF.PN_GFL = max(CONF.PN_GFL_Node(CONF.u_GFL > 0.5));
 CONF.PN_GFL_pu_Node = CONF.PN_GFL_Node/CONF.Base_MVA;
 
-% Manuscript Section II-C的LVRT参数以各GFL-WG额定功率为基准，并同时保存
+% 新版Section II-B，式(8)-(9)：LVRT参数以各GFL-WG额定功率为基准，并同时保存
 % 设备额定基准值与系统基准标幺值。
 CONF.KQ_GFL_Node = expand_built_node_parameter( ...
     GFL_Parameters.K_Q, GFL_Built_Nodes, CONF.Bn);
@@ -114,13 +123,20 @@ CONF.GFM_MaxModulesPerCandidate = GFM_Modules.Max_Modules_Per_Candidate;
 CONF.GFM_Module_Sequential = GFM_Modules.Enforce_Sequential_Build;
 CONF.GFM_Module_I_Post_Multiplier = GFM_Modules.I_Post_Multiplier;
 
-% 构造Manuscript式(25)的配置方案集合及固定配置-模块状态映射。
-GFM_Configuration = build_gfm_configuration_catalog(GFM_Modules);
-CONF.GFM_Config_Count = GFM_Configuration.Count;
-CONF.GFM_Config_Module_Matrix = GFM_Configuration.Module_Status;
-CONF.GFM_Config_Candidate_Matrix = GFM_Configuration.Candidate_Status;
-CONF.GFM_Config_A_cne = GFM_Configuration.A_CNE;
-CONF.GFM_Config_Module_Count = GFM_Configuration.Module_Count;
+% 新版式(28)直接使用模块变量；仅显式旧版对照才生成配置目录。
+CONF.GFM_Config_Count = 0;
+CONF.GFM_Config_Module_Matrix = [];
+CONF.GFM_Config_Candidate_Matrix = [];
+CONF.GFM_Config_A_cne = [];
+CONF.GFM_Config_Module_Count = [];
+if strcmp(CONF.ModelVersion,'legacy')
+    GFM_Configuration = build_gfm_configuration_catalog(GFM_Modules);
+    CONF.GFM_Config_Count = GFM_Configuration.Count;
+    CONF.GFM_Config_Module_Matrix = GFM_Configuration.Module_Status;
+    CONF.GFM_Config_Candidate_Matrix = GFM_Configuration.Candidate_Status;
+    CONF.GFM_Config_A_cne = GFM_Configuration.A_CNE;
+    CONF.GFM_Config_Module_Count = GFM_Configuration.Module_Count;
+end
 
 % 安全网络统一保留全部同步机、GFM-ES候选节点和已建GFL-WG接入节点。
 % Original_To_Reduced以0表示被Kron消元的原节点，其余值为降阶节点索引。
@@ -255,7 +271,7 @@ CONF.Gen_Shutdown_Cost = expand_generator_parameter( ...
 
 validate_uc_parameters(CONF, T);
 
-%% 9. 计算Manuscript式(24)的GFM-ES模块年固定成本
+%% 9. 计算新版式(27)的GFM-ES模块年固定成本
 % 功率与能量单位成本均已包含年化投资和固定运维，此处各计一次。
 Power_Cost   = GFM_Modules.Annual_Cost_Power_per_MW;
 Energy_Cost  = GFM_Modules.Annual_Cost_Energy_per_MWh;
@@ -281,6 +297,7 @@ function CONF_Public = build_public_multiple_snapshot_conf(CONF, params)
 %% 将求解所需的派生量按模型主题组织为公开配置结构。
 
 CONF_Public = struct();
+CONF_Public.ModelVersion = CONF.ModelVersion;
 
 CONF_Public.Network = struct();
 CONF_Public.Network.Bn = CONF.Bn;
@@ -295,7 +312,7 @@ CONF_Public.Network.Xd_Gen = CONF.Xd_Gen;
 CONF_Public.Network.Gen_Cost_Breakpoints = CONF.GenCostBreakpoints;
 
 CONF_Public.GFL_WG = struct();
-CONF_Public.GFL_WG.Built_Nodes = params.GFL_WG.Built_Nodes(:);
+CONF_Public.GFL_WG.Built_Nodes = CONF.Safety_GFL_Original_Nodes;
 CONF_Public.GFL_WG.u_GFL = CONF.u_GFL;
 CONF_Public.GFL_WG.PN_MW = CONF.PN_GFL;
 CONF_Public.GFL_WG.PN_pu = CONF.PN_GFL_pu_Node;

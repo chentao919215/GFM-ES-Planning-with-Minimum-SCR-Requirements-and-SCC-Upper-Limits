@@ -12,7 +12,7 @@ Project_Root = resolve_project_root_for_script();
 addpath(genpath(fullfile(Project_Root, 'code', 'functions')));
 
 % Match the current IV-D experiment and its locally validated T=3 result.
-Period_Counts = [3, 6];
+Period_Counts = [3, 6, 12, 24];
 
 % Load supported external MATLAB dependencies from existing paths or environment paths.
 add_temporal_dependency('MATPOWER_PATH', 'case30');

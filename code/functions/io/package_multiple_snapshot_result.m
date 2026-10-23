@@ -16,7 +16,9 @@ Cost.Unit  = 'annual';
 Cost.CON_Definition = ...
     'GFM-ES annual fixed cost including annualized investment and fixed O&M';
 
-if ~isfield(Diagnostics,'ConfigurationSelection')
+Is_New_Model = isfield(Diagnostics,'ModelVersion') && ...
+    strcmp(Diagnostics.ModelVersion,'2026-10-23');
+if ~Is_New_Model && ~isfield(Diagnostics,'ConfigurationSelection')
     error('ResultPackaging:MissingConfigurationSelection', ...
         'Diagnostics must contain the final configuration-selection vector.');
 end
@@ -42,7 +44,9 @@ Result.u_G_Stop           = u_G_Stop;
 Result.u_G_SCC            = u_G_SCC;
 Result.u_G_SCR            = u_G_SCR;
 Result.u_GFM_Mod          = u_GFM_Module;
-Result.lambda_c           = Diagnostics.ConfigurationSelection;
+if ~Is_New_Model
+    Result.lambda_c = Diagnostics.ConfigurationSelection;
+end
 % Scenario-dependent storage results use
 % [candidate, typical_day, wind_scenario, period].
 Result.P_GFM_Dis          = P_GFM_Dis;
@@ -117,6 +121,14 @@ SCC_Definition.SCC_TimeResolved_Dimension_Order = ...
 SCC_Definition.Unit = 'kA';
 SCC_Definition.Base_Current_kA = CONF.Base_kA;
 SCC_Definition.SCC_1_Non_Safety_Node_Value = 0;
+if Is_New_Model
+    SCC_Definition.SCC_1 = [ ...
+        'Union-UC SCC from the residual voltage in Eqs. (21)-(23), ', ...
+        'including local virtual impedance and all remote GFL-WG responses.'];
+    SCC_Definition.SCC_TimeResolved = ...
+        'Actual hourly UC evaluated with the converter-aware Eqs. (4)-(17).';
+    SCC_Definition.SCC_1_Non_Safety_Node_Value = NaN;
+end
 Result.SCC_Definition = SCC_Definition;
 
 SCR_Definition = struct();
@@ -166,6 +178,10 @@ Safety_Network.SCCStateDimensions = {'generator','typical_day'};
 Safety_Network.SCRStateDimensions = {'generator','typical_day'};
 Safety_Network.SCCImpedanceDimensions = ...
     {'retained_node','retained_node','typical_day'};
+if Is_New_Model
+    Safety_Network.SCCColumnOriginalNodes = [];
+    Safety_Network.SCCImpedanceDimensions = {};
+end
 Safety_Network.SCRImpedanceDimensions = ...
     {'retained_node','gfl_column','typical_day'};
 Result.SafetyNetwork = Safety_Network;

@@ -3,6 +3,10 @@ function CONF = normalize_multiple_snapshot_conf(CONF)
 % 公开的CONF按模型主题分组；该函数只在函数内部建立求解视图，
 % 不会改变调用方持有的分组结构。
 
+if ~isfield(CONF,'ModelVersion')
+    CONF.ModelVersion = '2026-10-23';
+end
+
 if ~isfield(CONF, 'Network')
     if isfield(CONF, 'solver')
         CONF.solver = normalize_solver_configuration(CONF.solver);
@@ -31,6 +35,7 @@ DEGRADATION = MULTI.Degradation;
 UC = CONF.UC;
 
 runtime = struct();
+runtime.ModelVersion = CONF.ModelVersion;
 
 runtime.Bn = N.Bn;
 runtime.Gn = N.Gn;
@@ -149,7 +154,7 @@ CONF = runtime;
 end
 
 function Solver = normalize_solver_configuration(Solver)
-%% Validate backend selection while preserving native option names.
+%% Validate Gurobi selection while preserving its native option names.
 
 if ~isstruct(Solver) || ~isfield(Solver, 'name') || ...
         ~isfield(Solver, 'options') || ~isstruct(Solver.options)
@@ -163,12 +168,12 @@ if isstring(Solver_Name) && isscalar(Solver_Name)
 end
 if ~ischar(Solver_Name) || ~isrow(Solver_Name)
     error('MultipleSnapshotConfig:InvalidSolverName', ...
-        'solver.name must be Gurobi or COPT.');
+        'solver.name must be Gurobi.');
 end
 Solver_Name = lower(strtrim(Solver_Name));
-if ~any(strcmp(Solver_Name, {'gurobi','copt'}))
+if ~strcmp(Solver_Name, 'gurobi')
     error('MultipleSnapshotConfig:InvalidSolverName', ...
-        'solver.name must be Gurobi or COPT.');
+        'Only Gurobi is supported as the MILP solver.');
 end
 if ~isfield(Solver.options, Solver_Name) || ...
         ~isstruct(Solver.options.(Solver_Name))

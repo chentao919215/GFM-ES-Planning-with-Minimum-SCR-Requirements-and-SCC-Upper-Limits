@@ -4,12 +4,18 @@
 Project_Root = resolve_project_root_for_script();
 addpath(genpath(fullfile(Project_Root, 'code', 'functions')));
 
-% 参数源脚本重新生成供程序读取的JSON文件。
-run(fullfile(Project_Root, 'data', 'params', 'generate_multiple_snapshot_default_params.m'));
-
-%% 1. 加载当前参数文件
-Parameter_File = fullfile(Project_Root, 'data', 'params', ...
-    'multiple_snapshot_default_params.json');
+%% 1. 准备并加载当前参数文件
+if exist('Parameter_File', 'var') && ~isempty(Parameter_File)
+    % 外部指定参数时直接读取，不覆盖用户提供的JSON文件。
+    Parameter_File = char(Parameter_File);
+    assert(isfile(Parameter_File), '参数文件不存在：%s', Parameter_File);
+else
+    % 未指定参数时，由参数源脚本重新生成默认JSON文件。
+    run(fullfile(Project_Root, 'data', 'params', ...
+        'generate_multiple_snapshot_default_params.m'));
+    Parameter_File = fullfile(Project_Root, 'data', 'params', ...
+        'multiple_snapshot_default_params.json');
+end
 [mpc, CONF, paths] = load_multiple_snapshot_case(Project_Root, Parameter_File);
 clear Project_Root Parameter_File
 

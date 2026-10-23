@@ -3,7 +3,7 @@ function Project_Root = resolve_project_root_for_script()
 
 Script_File = mfilename('fullpath');
 Script_Directory = fileparts(Script_File);
-Utils_Directory = fullfile(Script_Directory, '..', 'functions', 'utils');
+Utils_Directory = fullfile(Script_Directory, '..', '..', 'functions', 'utils');
 if isfolder(Utils_Directory)
     addpath(Utils_Directory);
 end

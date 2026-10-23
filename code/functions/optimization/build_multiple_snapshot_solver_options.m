@@ -1,5 +1,5 @@
 function ops = build_multiple_snapshot_solver_options(Solver_Configuration, Has_MIP_Start)
-%% Build YALMIP settings from the selected backend's native configuration.
+%% Build YALMIP settings from the configured Gurobi options.
 
 if nargin < 2
     Has_MIP_Start = false;
@@ -11,9 +11,9 @@ if ~isstruct(Solver_Configuration) || ~isfield(Solver_Configuration, 'name') || 
 end
 
 Solver_Name = lower(char(Solver_Configuration.name));
-if ~any(strcmp(Solver_Name, {'gurobi','copt'}))
+if ~strcmp(Solver_Name, 'gurobi')
     error('MultipleSnapshot:InvalidSolverName', ...
-        'Unsupported solver: %s.', Solver_Name);
+        'Only Gurobi is supported as the MILP solver; received %s.', Solver_Name);
 end
 Options = Solver_Configuration.options;
 if ~isfield(Options, Solver_Name) || ~isstruct(Options.(Solver_Name))

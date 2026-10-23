@@ -37,6 +37,18 @@ NET.Generator_P_Min       = CONF.Gen_Pmin;
 
 % 线路潮流计算参数。
 NET.Line_B_Series = CONF.Base_MVA./mpc.branch(:,4);
+Active_Branch = true(L,1);
+if strcmp(CONF.ModelVersion,'2026-10-23')
+    assert(isequal(mpc.bus(:,1),(1:N).'), ...
+        '请先将MATPOWER节点编号转换为连续内部编号1:N。');
+    if size(mpc.branch,2) >= 11
+        Active_Branch = mpc.branch(:,11) ~= 0;
+    end
+    assert(all(isfinite(mpc.branch(Active_Branch,4)) & ...
+        mpc.branch(Active_Branch,4) > 0), ...
+        '新版电抗主导网络要求在运线路电抗为有限正数。');
+    NET.Line_B_Series(~Active_Branch) = 0;
+end
 NET.Line_P_Max     = mpc.branch(:,6);
 NET.Line_Limited  = isfinite(NET.Line_P_Max) & NET.Line_P_Max > 0;
 
@@ -60,6 +72,8 @@ b  = mpc.branch(:,5);
 
 y    = 1./(r+1i*x);
 b_Sh = 1i*b/2;
+y(~Active_Branch) = 0;
+b_Sh(~Active_Branch) = 0;
 
 Y_Ff   = sparse(fb,fb,y+b_Sh,N,N);
 Y_Tt   = sparse(tb,tb,y+b_Sh,N,N);
@@ -73,9 +87,10 @@ Y_SG_Node   = NET.Generator_Location_Matrix*Y_SG_Unit;
 NET.Y_SG_Add = sparse(1:N,1:N,Y_SG_Node,N,N);
 
 %% 4. 构造Kron降阶安全网络
-% Manuscript Section II-B, Eq. (3): B_0=Im[Y_0]。安全网络采用无损
+% 新版Section II-A，式(1)：B_0=Im[Y_0]。安全网络采用无损
 % 感性近似，在Kron消元前忽略线路串联电阻和并联电纳。
 Y_Series_Safety = 1./(1i*x);
+Y_Series_Safety(~Active_Branch) = 0;
 Y_Safety_Ff = sparse(fb,fb,Y_Series_Safety,N,N);
 Y_Safety_Tt = sparse(tb,tb,Y_Series_Safety,N,N);
 Y_Safety_Ft = sparse(fb,tb,-Y_Series_Safety,N,N);

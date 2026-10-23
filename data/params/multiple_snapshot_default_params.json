@@ -20821,12 +20821,6 @@
             "MIPGap": 0.3,
             "MIPFocus": 1,
             "Heuristics": 0.2
-          },
-          "copt": {
-            "TimeLimit": 900,
-            "RelGap": 0.3,
-            "HeurLevel": 2,
-            "Presolve": 2
           }
         }
       },
@@ -20841,13 +20835,6 @@
             "MIPFocus": 3,
             "Heuristics": 0.01,
             "ConcurrentMIP": 2
-          },
-          "copt": {
-            "TimeLimit": 1800,
-            "RelGap": 0.005,
-            "HeurLevel": 0,
-            "CutLevel": 3,
-            "Presolve": 2
           }
         }
       }
@@ -20872,20 +20859,10 @@
         "LogToConsole": 1,
         "LogFile": "results\\gurobi_run.log"
       },
-      "copt": {
-        "Threads": 14,
-        "RelGap": 0.005,
-        "TimeLimit": 600,
-        "Logging": 1,
-        "LogToConsole": 1
-      },
       "mip_start": {
         "yalmip": {
           "usex0": 1,
           "warmstart": 1
-        },
-        "copt": {
-          "MipStartMode": 2
         }
       },
       "quiet": {
@@ -20896,10 +20873,6 @@
           "OutputFlag": 0,
           "LogToConsole": 0,
           "LogFile": ""
-        },
-        "copt": {
-          "Logging": 0,
-          "LogToConsole": 0
         }
       }
     }

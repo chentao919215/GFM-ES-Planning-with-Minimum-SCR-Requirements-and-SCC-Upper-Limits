@@ -230,9 +230,9 @@ params.Solver.Two_Stage.Stage_1 = struct('Name', 'feasible-search', ...
 params.Solver.Two_Stage.Stage_2 = struct('Name', 'optimality-proof', ...
     'Time_Limit', 1800, 'MIP_Gap', 0.005);
 
-% 求解器选择及其原生参数分别配置；不在后端之间转换参数名称或含义。
+% 求解器固定为Gurobi，按其原生参数配置求解选项。
 params.solver = struct();
-params.solver.name = 'gurobi'; % 可选 'gurobi' 或 'copt'
+params.solver.name = 'gurobi';
 params.solver.options = struct();
 params.solver.options.yalmip = struct('verbose', 2, 'savesolveroutput', 1);
 
@@ -249,40 +249,23 @@ params.solver.options.gurobi.OutputFlag = 1;
 params.solver.options.gurobi.LogToConsole = 1;
 params.solver.options.gurobi.LogFile = fullfile('results', 'gurobi_run.log');
 
-% COPT专属选项。
-params.solver.options.copt = struct();
-params.solver.options.copt.Threads = 14;
-params.solver.options.copt.RelGap = 0.005;
-params.solver.options.copt.TimeLimit = 600;
-params.solver.options.copt.Logging = 1;
-params.solver.options.copt.LogToConsole = 1;
-
-% 仅在提供MIP start时启用对应的YALMIP/COPT初始解选项。
+% 仅在提供MIP start时启用对应的YALMIP初始解选项。
 params.solver.options.mip_start = struct();
 params.solver.options.mip_start.yalmip = struct('usex0', 1, 'warmstart', 1);
-params.solver.options.mip_start.copt = struct('MipStartMode', 2);
 
-% 长时间后台运行时使用的静默输出选项，仍按各求解器原生名称设置。
+% 长时间后台运行时使用的Gurobi静默输出选项。
 params.solver.options.quiet = struct();
 params.solver.options.quiet.yalmip = struct('verbose', 0);
 params.solver.options.quiet.gurobi = struct( ...
     'OutputFlag', 0, 'LogToConsole', 0, 'LogFile', '');
-params.solver.options.quiet.copt = struct( ...
-    'Logging', 0, 'LogToConsole', 0);
-
-% 两阶段覆盖也分别以各后端的原生参数定义。
+% 两阶段覆盖使用Gurobi原生参数。
 params.Solver.Two_Stage.Stage_1.Options = struct();
 params.Solver.Two_Stage.Stage_1.Options.gurobi = struct( ...
     'TimeLimit', 300, 'MIPGap', 0.3, 'MIPFocus', 1, 'Heuristics', 0.2);
-params.Solver.Two_Stage.Stage_1.Options.copt = struct(...
-    'TimeLimit', 900, 'RelGap', 0.3, 'HeurLevel', 2, 'Presolve',2);
 params.Solver.Two_Stage.Stage_2.Options = struct();
 params.Solver.Two_Stage.Stage_2.Options.gurobi = struct( ...
     'TimeLimit', 1800, 'MIPGap', 0.005, 'MIPFocus', 3, ...
     'Heuristics', 0.01, 'ConcurrentMIP', 2);
-params.Solver.Two_Stage.Stage_2.Options.copt = struct(...
-    'TimeLimit', 1800, 'RelGap', 0.005, 'HeurLevel', 0, ...
-     'CutLevel',    3, 'Presolve',  2);
 
 %% 8. 写出JSON文件
 JSON_Text = jsonencode(params, 'PrettyPrint', true);

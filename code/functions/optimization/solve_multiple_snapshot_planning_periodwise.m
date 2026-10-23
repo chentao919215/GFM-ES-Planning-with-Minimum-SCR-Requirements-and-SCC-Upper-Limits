@@ -11,6 +11,8 @@ function [SCC_0,SCC_1,SCC_2,Value_P_Line,Value_Theta,Value_P_G,Value_P_GFL,Value
 % 安全网络按实际(d,t)同步机状态重构，安全变量与McCormick变量不带场景维。
 
 CONF = normalize_multiple_snapshot_conf(CONF);
+assert(strcmp(CONF.ModelVersion,'legacy') && CONF.GFM_Config_Count > 0, ...
+    '此逐时入口保留旧版模型，仅接受ModelVersion=legacy；不能与新版混用。');
 Enable_SCC = CONF.Enable_SCC;
 Enable_SCR = CONF.Enable_SCR;
 Security_Constraint_Assembly = struct( ...
@@ -507,8 +509,7 @@ Cost_Total_Annual = Cost_GEN + Cost_GFM_Fixed + Cost_Curt + Cost_UC;
 Objective = Cost_Total_Annual/CONF.ObjectiveScale;
 
 %% 6. 调用求解器
-% 求解器名称与原生选项均从CONF.solver读取。
-Solver_Select = CONF.solver.name;
+% Gurobi原生选项从CONF.solver读取。
 ops = build_multiple_snapshot_solver_options( ...
     CONF.solver, isfield(CONF, 'MIPStart'));
 if isfield(CONF, 'MIPStart')
@@ -520,29 +521,7 @@ if isfield(CONF, 'MIPStart')
     assign(u_GFM_Ch, CONF.MIPStart.u_GFM_Ch);
 
 end
-COPT_Log_Source = '';
-Results_Directory = '';
-if strcmp(Solver_Select, 'copt') && ops.verbose > 0
-    % YALMIP的COPT适配器将日志写到当前目录下的copt.log。
-    COPT_Log_Source = fullfile(pwd, 'copt.log');
-    Project_Root = fileparts(fileparts(fileparts(fileparts(mfilename('fullpath')))));
-    Results_Directory = fullfile(Project_Root, 'results');
-    if ~isfolder(Results_Directory)
-        mkdir(Results_Directory);
-    end
-end
 sol = optimize(C, Objective, ops);
-if ~isempty(COPT_Log_Source) && isfile(COPT_Log_Source)
-    % 将YALMIP在当前目录生成的COPT日志归档到项目results目录。
-    COPT_Log_Destination = fullfile(Results_Directory, 'copt.log');
-    [Log_Moved, Log_Message] = movefile( ...
-        COPT_Log_Source, COPT_Log_Destination, 'f');
-    if ~Log_Moved
-        warning('MultipleSnapshot:LogArchiveFailed', ...
-            '无法将COPT日志从%s移动到%s：%s', ...
-            COPT_Log_Source, COPT_Log_Destination, Log_Message);
-    end
-end
 
 %% 7. 提取优化结果
 Diagnostics = build_multiple_snapshot_diagnostics(sol);

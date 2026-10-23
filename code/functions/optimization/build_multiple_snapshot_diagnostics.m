@@ -30,11 +30,11 @@ if isfield(sol, 'solveroutput') && isstruct(sol.solveroutput)
         Solver_Result = Solver_Result.result;
     end
 
-% COPT的原始结果字段为bestbnd、nodecnt等；保留旧别名兼容已有日志。\n    Diagnostics.objective = read_numeric_field(Solver_Result, 'objval', NaN);
-    Diagnostics.best_bound = read_numeric_field( ...
-        Solver_Result, {'objbound','bestbnd'}, NaN);
+    Diagnostics.objective = read_numeric_field(Solver_Result, 'objval', NaN);
+    Diagnostics.best_bound = read_numeric_field(Solver_Result, 'objbound', NaN);
     Diagnostics.mip_gap = read_numeric_field(Solver_Result, 'mipgap', NaN);
-    % COPT原始结果不提供mipgap时，按其RelGap定义由界值计算。\n    if ~isfinite(Diagnostics.mip_gap) && ...
+    % 若求解器未返回MIP gap，则根据 incumbent 与 best bound 计算。
+    if ~isfinite(Diagnostics.mip_gap) && ...
             isfinite(Diagnostics.objective) && ...
             isfinite(Diagnostics.best_bound)
         Gap_Scale = max(abs(Diagnostics.objective), ...
@@ -48,32 +48,24 @@ if isfield(sol, 'solveroutput') && isstruct(sol.solveroutput)
             Diagnostics.mip_gap = Inf;
         end
     end
-    Diagnostics.node_count = read_numeric_field( ...
-        Solver_Result, {'nodecount','nodecnt'}, NaN);
-    Diagnostics.iteration_count = read_numeric_field( ...
-        Solver_Result, {'itercount','simplexiter'}, NaN);
+    Diagnostics.node_count = read_numeric_field(Solver_Result, 'nodecount', NaN);
+    Diagnostics.iteration_count = read_numeric_field(Solver_Result, 'itercount', NaN);
     Solution_Count = read_numeric_field(Solver_Result, 'solcount', NaN);
     Diagnostics.has_incumbent = ...
         (~isnan(Solution_Count) && Solution_Count > 0) || ...
         isfinite(Diagnostics.objective) || ...
         (isfield(Solver_Result,'x') && ~isempty(Solver_Result.x));
 end
-
-function value = read_numeric_field(Input_Struct, Field_Names, Default_Value)
-%% 按兼容字段名读取求解器结果中的数值字段。
-
-if ischar(Field_Names) || isstring(Field_Names)
-    Field_Names = cellstr(Field_Names);
 end
+
+function value = read_numeric_field(Input_Struct, Field_Name, Default_Value)
+%% 读取Gurobi求解结果中的数值字段。
+
 value = Default_Value;
-for k = 1:numel(Field_Names)
-    Field_Name = Field_Names{k};
-    if isfield(Input_Struct, Field_Name) && ...
-            isnumeric(Input_Struct.(Field_Name)) && ...
-            isscalar(Input_Struct.(Field_Name))
-        value = double(Input_Struct.(Field_Name));
-        return;
-    end
+if isfield(Input_Struct, Field_Name) && ...
+        isnumeric(Input_Struct.(Field_Name)) && ...
+        isscalar(Input_Struct.(Field_Name))
+    value = double(Input_Struct.(Field_Name));
 end
 
 end

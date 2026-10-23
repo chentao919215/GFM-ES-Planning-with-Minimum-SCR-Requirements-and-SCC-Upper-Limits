@@ -31,10 +31,16 @@ Data.Period_Hours = C.PeriodDurations_Hours(:).';
 Data.Time_Edges = [0, cumsum(Data.Period_Hours)];
 Data.Time_Centers = Data.Time_Edges(1:end-1) + Data.Period_Hours/2;
 
-% 现有图形版式保持单场景展示。随机模型结果默认选择基准场景，
-% 完整四维结果仍保存在Data.Full_Result中供后续批量场景制图使用。
+% 现有图形版式保持单场景展示。优先选择已标记的基准场景；
+% 显式场景未定义基准时，绘图默认取列表第一项，完整结果仍保存在Data.Full_Result中。
 if nargin < 5 || isempty(Scenario_Index)
-    Data.Selected_Scenario_Index = C.WindScenarioBaseIndex;
+    Default_Scenario_Index = C.WindScenarioBaseIndex;
+    if ~isscalar(Default_Scenario_Index) || ~isfinite(Default_Scenario_Index) || ...
+            Default_Scenario_Index ~= round(Default_Scenario_Index) || ...
+            Default_Scenario_Index < 1 || Default_Scenario_Index > Data.K
+        Default_Scenario_Index = 1;
+    end
+    Data.Selected_Scenario_Index = Default_Scenario_Index;
 else
     Data.Selected_Scenario_Index = Scenario_Index;
 end
@@ -56,8 +62,10 @@ assert_size(Result.P_GFM_Dis, [Data.Candidate_Count Data.D Data.T], 'P_GFM_Dis')
 assert_size(Result.E_GFM, [Data.Candidate_Count Data.D Data.T], 'E_GFM');
 assert_size(Result.u_G_SCC, [Data.G Data.D], 'u_G_SCC');
 assert_size(Result.u_G_SCR, [Data.G Data.D], 'u_G_SCR');
-assert_size(Result.Z_SCC, [C.Safety_Node_Count C.Safety_Node_Count Data.D], ...
-    'Z_SCC');
+if ~(isfield(C,'ModelVersion') && strcmp(C.ModelVersion,'2026-10-23'))
+    assert_size(Result.Z_SCC, [C.Safety_Node_Count C.Safety_Node_Count Data.D], ...
+        'Z_SCC');
+end
 assert_size(Result.Z_SCR, [C.Safety_Node_Count C.Safety_GFL_Count Data.D], ...
     'Z_SCR');
 assert_size(Result.SCC_1, [Data.N Data.D], 'SCC_1');
@@ -121,7 +129,7 @@ if ~all(found)
     error('At least one module bus is not in GFM_Module_Candidates.');
 end
 Linear_Index = sub2ind(size(Module_Table), Candidate_Index, Module_Order);
-Module_Built = round(Module_Table(Linear_Index));
+Module_Built = reshape(round(Module_Table(Linear_Index)),[],1);
 end
 
 function Cost = calculate_cost_breakdown(Result)
@@ -172,7 +180,11 @@ Security.SCR_Aggregated = R.SCR(Security.SCR_Nodes,:);
 Security.SCR_TimeResolved = R.SCR_TimeResolved;
 Security.SCR_Hourly_Min = reshape(min(R.SCR_TimeResolved,[],1), ...
     Data.D,numel(Security.SCR_Nodes)).';
-Security.SCR_Limit = repmat(C.SCR_min,numel(Security.SCR_Nodes),Data.D);
+if isscalar(C.SCR_min)
+    Security.SCR_Limit = repmat(C.SCR_min,numel(Security.SCR_Nodes),Data.D);
+else
+    Security.SCR_Limit = repmat(C.SCR_min(Security.SCR_Nodes),1,Data.D);
+end
 Security.SCR_Aggregated_Margin = Security.SCR_Aggregated-Security.SCR_Limit;
 Security.SCR_Hourly_Margin = Security.SCR_Hourly_Min-Security.SCR_Limit;
 Security.SCR_Conservatism_Margin = ...
@@ -192,12 +204,20 @@ end
 function validate_parameter_compatibility(Result, params)
 %% 防止将已保存结果与不同的当前JSON算例混用。
 C = Result.CONF;
+Parameter_Enable_SCC = optional_logical_switch( ...
+    params.Security,'Enable_SCC',true);
+Parameter_Enable_SCR = optional_logical_switch( ...
+    params.Security,'Enable_SCR',true);
+Result_Enable_SCC = optional_logical_switch(C,'Enable_SCC',true);
+Result_Enable_SCR = optional_logical_switch(C,'Enable_SCR',true);
 checks = {
     size(params.Network.mpc.bus,1), C.Bn, 'bus count';
     size(params.Network.mpc.gen,1), C.Gn, 'generator count';
     size(params.Network.mpc.branch,1), C.Ln, 'line count';
     params.Multiple_Snapshot.Time.Typical_Day_Count, C.TypicalDayCount, 'typical-day count';
     params.Multiple_Snapshot.Time.Period_Count, C.PeriodCount, 'period count';
+    Parameter_Enable_SCC, Result_Enable_SCC, 'SCC constraint switch';
+    Parameter_Enable_SCR, Result_Enable_SCR, 'SCR constraint switch';
     params.Security.SCR_min, C.SCR_min, 'classic SCR limit'};
 for k = 1:size(checks,1)
     if ~isequaln(checks{k,1}, checks{k,2})
@@ -228,6 +248,17 @@ else
 end
 assert_close(probabilities(:),C.WindScenarioProbabilities(:), ...
     'wind-scenario probabilities');
+end
+
+function Value = optional_logical_switch(Input,Field_Name,Default_Value)
+if ~isfield(Input,Field_Name)
+    Value = Default_Value;
+else
+    Value = Input.(Field_Name);
+end
+if ~islogical(Value) || ~isscalar(Value)
+    error('%s must be a scalar logical value.',Field_Name);
+end
 end
 
 function assert_close(a, b, label)

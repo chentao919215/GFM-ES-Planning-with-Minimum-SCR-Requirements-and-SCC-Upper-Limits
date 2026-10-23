@@ -1,4 +1,4 @@
-function Run_Info = start_multiple_snapshot_planning_longrun(Project_Root)
+function Run_Info = start_multiple_snapshot_planning_longrun(Project_Root, Parameter_File)
 %% 本函数功能是在后台启动多时段规划主脚本。
 %
 % MCP桥接调用的同步响应窗口较短。
@@ -7,6 +7,12 @@ function Run_Info = start_multiple_snapshot_planning_longrun(Project_Root)
 if nargin < 1 || isempty(Project_Root)
     Project_Root = resolve_project_root();
 end
+if nargin < 2 || isempty(Parameter_File)
+    error('MultipleSnapshot:ParameterFileRequired', ...
+        '后台规划同样需要显式提供经确认的算例JSON路径。');
+end
+Parameter_File = canonical_path(Parameter_File);
+assert(isfile(Parameter_File),'参数文件不存在。');
 
 Project_Root = canonical_path(Project_Root);
 Functions_Directory = fullfile(Project_Root, 'code', 'functions');
@@ -32,6 +38,7 @@ Timer_Key = ['multiple_snapshot_longrun_timer_', stamp];
 Run_Info = struct();
 Run_Info.Project_Root = Project_Root;
 Run_Info.Script_File = Script_File;
+Run_Info.Parameter_File = Parameter_File;
 Run_Info.Status_File = Status_File;
 Run_Info.Output_File = Output_File;
 Run_Info.Timer_Key = Timer_Key;
@@ -68,9 +75,11 @@ write_status(Run_Info.Status_File, 'RUNNING', 'Planning script is running.', ...
 
 try
     addpath(genpath(fullfile(Run_Info.Project_Root, 'code', 'functions')));
+    addpath(fileparts(Run_Info.Script_File));
     setappdata(0, Option_Key, struct('quiet',true));
     warning('off', 'all');
 
+    Parameter_File = Run_Info.Parameter_File; %#ok<NASGU> 供下方入口脚本读取。
     Captured_Output = evalc('run(Run_Info.Script_File);');
     write_text_file(Run_Info.Output_File, Captured_Output);
 
