@@ -6,6 +6,11 @@ function CONF = normalize_multiple_snapshot_conf(CONF)
 if ~isfield(CONF,'ModelVersion')
     CONF.ModelVersion = '2026-10-23';
 end
+if ~isfield(CONF,'SecurityFormulation')
+    CONF.SecurityFormulation = 'aggregated';
+end
+CONF.SecurityFormulation = validatestring(CONF.SecurityFormulation, ...
+    {'aggregated','periodwise'});
 
 if ~isfield(CONF, 'Network')
     if isfield(CONF, 'solver')
@@ -13,6 +18,10 @@ if ~isfield(CONF, 'Network')
     end
     CONF.Enable_SCC = read_optional_logical_scalar(CONF, 'Enable_SCC', true);
     CONF.Enable_SCR = read_optional_logical_scalar(CONF, 'Enable_SCR', true);
+    if ~isfield(CONF,'Consider_Wind_Uncertainty') && ...
+            isfield(CONF,'WindScenarioCount')
+        CONF.Consider_Wind_Uncertainty = double(CONF.WindScenarioCount > 1);
+    end
     return;
 end
 
@@ -36,6 +45,7 @@ UC = CONF.UC;
 
 runtime = struct();
 runtime.ModelVersion = CONF.ModelVersion;
+runtime.SecurityFormulation = CONF.SecurityFormulation;
 
 runtime.Bn = N.Bn;
 runtime.Gn = N.Gn;
@@ -110,6 +120,11 @@ runtime.I_limit = SEC.I_limit_pu;
 runtime.SCR_min = SEC.SCR_min;
 runtime.Enable_SCC = read_optional_logical_scalar(SEC, 'Enable_SCC', true);
 runtime.Enable_SCR = read_optional_logical_scalar(SEC, 'Enable_SCR', true);
+if isfield(SEC,'Consider_Wind_Uncertainty')
+    runtime.Consider_Wind_Uncertainty = SEC.Consider_Wind_Uncertainty;
+else
+    runtime.Consider_Wind_Uncertainty = double(WIND.Count > 1);
+end
 runtime.KZ = SOLVER.KZ;
 runtime.ERR_TOL = SOLVER.ERR_TOL;
 runtime.ZBoundMargin = SOLVER.Z_Bound_Margin;

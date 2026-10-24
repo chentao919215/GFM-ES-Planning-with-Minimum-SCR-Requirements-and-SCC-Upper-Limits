@@ -5,8 +5,10 @@ function [SCC_0,SCC_1,SCC_2,Value_P_Line,Value_Theta,Value_P_G,Value_P_GFL,Value
     Value_u_GFM_Ch,Value_P_GFL_Curt,Value_Cost_Curt,...
     Value_u_G_Start,Value_u_G_Stop,Value_Cost_UC, ...
     SCC_TimeResolved,SCR_TimeResolved,SecurityValidation] = ...
-    solve_multiple_snapshot_planning(mpc,CONF)
+    solve_multiple_snapshot_planning(mpc,CONF,Return_No_Incumbent)
 %% 构建并求解新版论文模型，旧版仅通过显式legacy入口运行。
+% 可选诊断出口供扫描归档无可行解的停止状态；默认仍按原行为抛错。
+if nargin < 3, Return_No_Incumbent = false; end
 CONF = normalize_multiple_snapshot_conf(CONF);
 if strcmp(CONF.ModelVersion,'legacy')
     [SCC_0,SCC_1,SCC_2,Value_P_Line,Value_Theta,Value_P_G,Value_P_GFL,Value_P_GFM, ...
@@ -77,14 +79,17 @@ Binary_Variables = [u_SG(:); u_SG_Start(:); u_SG_Stop(:); ...
 Diagnostics.Scalar_Variable_Count = numel(Model_Variable_Ids);
 Diagnostics.Binary_Variable_Count = numel(intersect( ...
     Model_Variable_Ids,getvariables(Binary_Variables)));
-Constraint_Model = struct(C);
-Constraint_Clauses = Constraint_Model.clauses{1};
+% YALMIP可能分层存放clauses；先展平，避免只统计第一组约束。
+Constraint_Model = struct(flatten(C));
+Constraint_Clauses = Constraint_Model.clauses;
 Diagnostics.Scalar_Constraint_Count = 0;
 for Constraint_Index = 1:numel(Constraint_Clauses)
     Diagnostics.Scalar_Constraint_Count = ...
         Diagnostics.Scalar_Constraint_Count + ...
         numel(Constraint_Clauses{Constraint_Index}.data);
 end
+Diagnostics.Scalar_Constraint_Count_Definition = ...
+    'Scalar YALMIP equality/inequality components before bound extraction and solver presolve';
 Diagnostics.objective_scale = CONF.ObjectiveScale;
 % 部分YALMIP后端不返回目标值字段；有可行解时从已求解模型补齐。
 if Diagnostics.has_incumbent && ~isfinite(Diagnostics.objective)
@@ -111,6 +116,17 @@ if Diagnostics.has_incumbent && ~isfinite(Diagnostics.mip_gap) && ...
 end
 
 Diagnostics.SecurityConstraintAssembly = Security_Constraint_Assembly;
+Diagnostics.ModelVersion = '2026-10-23';
+
+if Return_No_Incumbent && ~Diagnostics.has_incumbent
+    [SCC_0,SCC_1,SCC_2,Value_P_Line,Value_Theta,Value_P_G,Value_P_GFL,Value_P_GFM, ...
+        SCR,Z_SCC_Val,Z_SCR_Val,Value_u_GFL,Value_u_G,Value_u_G_SCC,Value_u_G_SCR, ...
+        Value_Cost_CON,Value_Cost_GEN,Value_Cost_Total,Value_u_GFM_Module, ...
+        Value_P_GFM_Dis,Value_P_GFM_Ch,Value_E_GFM,Value_u_GFM_Ch,Value_P_GFL_Curt, ...
+        Value_Cost_Curt,Value_u_G_Start,Value_u_G_Stop,Value_Cost_UC, ...
+        SCC_TimeResolved,SCR_TimeResolved,SecurityValidation] = deal([]);
+    return;
+end
 
 if sol.problem == 0
     disp('Solver converged successfully.');
@@ -148,6 +164,7 @@ Value_u_G_SCR = min(round(Value_u_G),[],3);
 Value_u_GFM_Module = value(u_GFM_Module);
 Value_u_GFM_Ch = value(u_GFM_Ch);
 Diagnostics.ModelVersion = '2026-10-23';
+Diagnostics.SecurityFormulation = CONF.SecurityFormulation;
 
 %% 8. 以新版方程独立复算聚合与逐时安全指标
 Value_u_GFM_Module_Table = reshape(Value_u_GFM_Module(Module_Linear_Index),[],1);
@@ -156,25 +173,63 @@ Value_u_GFM_Module_Table = reshape(Value_u_GFM_Module(Module_Linear_Index),[],1)
     NET,CONF,Value_u_GFM_Module_Table,Value_u_G);
 SecurityValidation.ConstraintAssembly = Security_Constraint_Assembly;
 Diagnostics.SecurityPosthocRegression = struct();
-if Enable_SCC
-    Diagnostics.SecurityPosthocRegression.SCC_MaxAbsDifference_kA = ...
-        finite_max_abs_difference(SCC_1(NET.Safety_Retained_Nodes,:), ...
-        value(Model.Security.SCC)*CONF.Base_kA);
-end
-if Enable_SCR
-    Diagnostics.SecurityPosthocRegression.Z_SCR_MaxAbsDifference_pu = ...
-        finite_max_abs_difference(imag(Z_SCR_Val),value(Model.Security.X_SCR));
+if strcmp(CONF.SecurityFormulation,'periodwise')
+    % 逐时模型必须与实际UC复算值逐节点、逐典型日、逐时段比较。
+    SCC_Difference = nan(CONF.PeriodCount,1);
+    SCR_Difference = nan(CONF.PeriodCount,1);
+    for t = 1:CONF.PeriodCount
+        Hourly_Security = Model.Security.Periodwise{t};
+        if Enable_SCC
+            Hourly_SCC = reshape(SCC_TimeResolved(t,:,:), ...
+                CONF.TypicalDayCount,NET.Safety_N).';
+            SCC_Difference(t) = finite_max_abs_difference( ...
+                Hourly_SCC,value(Hourly_Security.SCC)*CONF.Base_kA);
+        end
+        if Enable_SCR
+            Hourly_X = value(Hourly_Security.X_SCR);
+            Optimized_SCR = zeros(CONF.TypicalDayCount,NET.Safety_GFL_Count);
+            for d = 1:CONF.TypicalDayCount
+                for k = 1:NET.Safety_GFL_Count
+                    n = NET.Safety_GFL_Reduced_Indices(k);
+                    Bus = NET.Safety_GFL_Original_Nodes(k);
+                    Optimized_SCR(d,k) = ...
+                        1/(Hourly_X(n,k,d)*CONF.PN_GFL_pu_Node(Bus));
+                end
+            end
+            Hourly_SCR = reshape(SCR_TimeResolved(t,:,:), ...
+                CONF.TypicalDayCount,NET.Safety_GFL_Count);
+            SCR_Difference(t) = finite_max_abs_difference( ...
+                Hourly_SCR,Optimized_SCR);
+        end
+    end
+    if Enable_SCC
+        Diagnostics.SecurityPosthocRegression.SCC_MaxAbsDifference_kA = ...
+            max(SCC_Difference,[],'includenan');
+    end
+    if Enable_SCR
+        Diagnostics.SecurityPosthocRegression.SCR_MaxAbsDifference = ...
+            max(SCR_Difference,[],'includenan');
+    end
+else
+    if Enable_SCC
+        Diagnostics.SecurityPosthocRegression.SCC_MaxAbsDifference_kA = ...
+            finite_max_abs_difference(SCC_1(NET.Safety_Retained_Nodes,:), ...
+            value(Model.Security.SCC)*CONF.Base_kA);
+    end
+    if Enable_SCR
+        Diagnostics.SecurityPosthocRegression.Z_SCR_MaxAbsDifference_pu = ...
+            finite_max_abs_difference(imag(Z_SCR_Val),value(Model.Security.X_SCR));
+    end
 end
 SCC_0 = [];
 SCC_2 = [];
 end
 
 function Maximum = finite_max_abs_difference(A,B)
-Difference = abs(A-B);
-Difference = Difference(isfinite(Difference));
-if isempty(Difference)
+if ~isequal(size(A),size(B)) || isempty(A) || ...
+        any(~isfinite(A(:))) || any(~isfinite(B(:)))
     Maximum = NaN;
 else
-    Maximum = max(Difference);
+    Maximum = max(abs(A(:)-B(:)));
 end
 end

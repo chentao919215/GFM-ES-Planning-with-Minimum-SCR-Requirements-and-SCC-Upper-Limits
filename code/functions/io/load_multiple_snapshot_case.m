@@ -88,6 +88,8 @@ CONF.Enable_SCC = read_optional_logical_scalar( ...
     params.Security, 'Enable_SCC', true);
 CONF.Enable_SCR = read_optional_logical_scalar( ...
     params.Security, 'Enable_SCR', true);
+CONF.Consider_Wind_Uncertainty = read_optional_binary_scalar( ...
+    params.Security, 'Consider_Wind_Uncertainty', NaN);
 CONF.Require_Source_Online = logical(params.Security.Require_Source_Online);
 
 %% 4. 读取模块化GFM-ES参数
@@ -249,6 +251,19 @@ CONF.DeterministicDegradation.ProfileMatchesOriginal = ...
 CONF.DeterministicDegradation.InputEquivalent = ...
     CONF.DeterministicDegradation.IsSingleProbabilityOneScenario && ...
     CONF.DeterministicDegradation.ProfileMatchesOriginal;
+if isnan(CONF.Consider_Wind_Uncertainty)
+    % 兼容未包含新开关的旧参数文件：按输入场景数推断模式。
+    CONF.Consider_Wind_Uncertainty = double(CONF.WindScenarioCount > 1);
+end
+if CONF.Consider_Wind_Uncertainty == 1 && CONF.WindScenarioCount < 2
+    error(['Security.Consider_Wind_Uncertainty=1时必须配置至少两个', ...
+        '风电场景。']);
+end
+if CONF.Consider_Wind_Uncertainty == 0 && ...
+        ~CONF.DeterministicDegradation.IsSingleProbabilityOneScenario
+    error(['Security.Consider_Wind_Uncertainty=0时必须配置一个概率为1的', ...
+        '风电场景；请重新运行默认参数生成脚本。']);
+end
 
 % 同步机最小出力显式由多时段参数文件给定。
 CONF.Gen_Pmin = params.UC.Gen_Pmin_MW(:);
@@ -421,6 +436,8 @@ CONF_Public.Security.I_limit_pu = CONF.I_limit;
 CONF_Public.Security.SCR_min = CONF.SCR_min;
 CONF_Public.Security.Enable_SCC = CONF.Enable_SCC;
 CONF_Public.Security.Enable_SCR = CONF.Enable_SCR;
+CONF_Public.Security.Consider_Wind_Uncertainty = ...
+    CONF.Consider_Wind_Uncertainty;
 CONF_Public.Security.Require_Source_Online = CONF.Require_Source_Online;
 
 multi = params.Multiple_Snapshot;
@@ -756,6 +773,23 @@ if ~islogical(Value) || ~isscalar(Value)
     error('MultipleSnapshotConfig:InvalidLogicalSwitch', ...
         'Security.%s必须为标量逻辑值true或false。',Field_Name);
 end
+
+end
+
+function Value = read_optional_binary_scalar(Input, Field_Name, Default_Value)
+%% 读取可选0/1数值开关，并拒绝非标量或其他数值。
+
+if ~isfield(Input,Field_Name)
+    Value = Default_Value;
+    return;
+end
+Value = Input.(Field_Name);
+if ~isnumeric(Value) || ~isscalar(Value) || ~isfinite(Value) || ...
+        ~ismember(Value,[0,1])
+    error('MultipleSnapshotConfig:InvalidBinarySwitch', ...
+        'Security.%s必须为数值标量0或1。',Field_Name);
+end
+Value = double(Value);
 
 end
 

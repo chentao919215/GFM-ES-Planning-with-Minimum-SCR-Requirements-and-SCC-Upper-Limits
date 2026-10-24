@@ -1,291 +1,193 @@
-# GFM-ES安全配置优化项目
+# GFM-ES 安全配置优化项目
 
-## 2026-10 新版论文模型入口
+本项目研究高比例跟网型风电（GFL-WG）接入条件下，构网型储能（GFM-ES）的模块投建、同步机启停与运行协同优化。默认数学模型依据用户确认的 `manuscript_10_23_17_40` Section II 式（1）—（26）、Section III 式（27）—（35）及 Appendix，实现 SCC 上限和 SCR 下限下的多典型日规划。
 
-默认规划模型已对齐用户确认的 `manuscript_10_23_17_40`。新版直接优化 GFM-ES 模块投建和逐时 UC，以日内 UC 并集计算 SCC、以交集计算 SCR，并在故障点和故障后连通分量施加源支撑约束（Section II 式（1）—（26）、Section III 式（27）—（35）及 Appendix）。旧模型仅通过显式 `ModelVersion = 'legacy'` 路由，不能与新版变量或约束混用。
+本次同步包括五个 Case 的安全指标与 UC 绘图、聚合保守性散点图、灵敏度分析，以及新版 Aggregated/Period-Wise 时间尺度对照。仓库参数和归档结果按其自身配置解释；论文 Section IV 的最终参数与结果仍需研究者确认，旧版结果不能作为新版模型的正确答案。
 
-详细公式映射和验证记录见[新版模型迁移说明](docs/model_migration_20261023.md)。主入口脚本保持脚本形式：若工作区已设置 `Parameter_File`，脚本直接读取该 JSON；否则运行参数生成脚本并重生成默认 JSON。求解结束后脚本会调用 `mailTome` 发送完成通知。新版 Section IV 算例参数尚未确认，因此仓库现有参数只可视为历史输入，不能据此声称复现了新版算例结果。
+## 环境与目录
 
-## 2026-09 IV-C 灵敏度绘图脚本
+- MATLAB R2024b；设备仿真另需 Simulink 及相应电气工具箱。
+- MATPOWER（提供 `case30`，本地验证版本为 7.1）。
+- YALMIP（提供 `sdpvar`、`optimize`；比较计算时间时应固定版本）。
+- **Gurobi 是唯一规划求解器**，需安装 MATLAB API 和有效许可证；本地新版 T=3 验证使用 Gurobi 13.0。
 
-- 补充论文 IV-C 灵敏度结果绘图脚本：`code/scripts/figure/for_paper/plot_fig6_scc_sensitivity.m`（SCC）和 `plot_fig7_scr_sensitivity.m`（SCR）。
-- Fig. 6/7 脚本读取 `results_useful/from_laptop/IV-C/{SCC,SCR}` 下的 13 个 Stage-2 `.mat` 结果；这些绘图输入随版本提交，脚本不会自动重新运行规划求解。
-
-## 历史 IV-D 聚合与逐时安全建模的时间尺度扫描
-
-- 入口脚本为 `code/scripts/system/run_temporal_scalability_analysis.m`，会启动规划优化。扫描输入将 `ModelVersion` 显式设为 `legacy`，对照旧版聚合安全模型与旧版逐时（PW）安全模型；结果不验证新版聚合安全模型，也不是新版论文算例结果。
-- 当前脚本扫描周期数为 `Period_Counts = [3, 6, 12, 24]`；已完成的旧扫描结果应按其记录的输入与求解配置解释。
-- 通用扫描函数为 `code/functions/utils/run_multiple_snapshot_temporal_scalability_scan.m`。每个周期数只生成一份时间聚合输入，并由聚合（AG）与逐时（PW）模型共同使用，以保证比较数据一致。
-- 时序输入由原 24 个连续小时分块取平均（`q = 24/T`），用于负荷与风电可用出力等时序量；典型日权重、风电场景概率及场景数量保持不变。机组最小开停机时间按新的时段长度换算，爬坡率仍按 MW/h 解释。
-- AG 调用 `solve_multiple_snapshot_planning`，PW 调用 `solve_multiple_snapshot_planning_periodwise`。PW 在每个典型日和时段建立安全约束，不使用 AG 的同步机状态并集/交集安全网络。
-- IV-D 以默认参数源中的 Gurobi 配置运行 AG 与 PW；除时限外，两者沿用同一组求解配置。PW 的 Stage-1 与 Stage-2 `TimeLimit` 分别设为对应 AG 时限的 5 倍。
-- 运行环境需要 MATLAB R2024b、YALMIP、MATPOWER（提供 `case30`）以及已安装并获许可的 Gurobi MATLAB API。入口脚本会优先使用 MATLAB 已有路径；否则读取 `MATPOWER_PATH`、`YALMIP_PATH`、`GUROBI_MATLAB_PATH` 或 `GUROBI_HOME` 环境变量添加依赖路径。使用相同 MATLAB、YALMIP、MATPOWER、Gurobi 版本及数据和求解配置可复现相同模型；运行时间会受硬件影响。
-- RTS-GMLC D=4、K=4 的时序 `.mat` 输入由参数生成脚本从项目相对路径读取；MAT 文件按仓库忽略规则不随 Git 提交，运行前需在约定路径提供该文件。
-- 扫描输入、分阶段结果和汇总表写入 `results/multiple_snapshot_temporal_scalability_<timestamp>/`；结果目录由 Git 忽略。汇总表每行对应一个 `(Period_Count, Formulation)` 组合。
-- 历史 `T=3` 的 AG/PW 配对计算曾达到各自停止目标并通过逐时安全复核；这只是旧版部分扫描验证，不能作为新版模型的验证结果。
-
-
-## 历史更新记录：设备级模型与参数维护
-
-以下内容记录迁移前的设备级模型和参数维护工作，不构成新版论文的算例参数基准：
-
-- 设备、网络、经济、安全及求解参数按算例文档统一设置；
-- 有明确文献或数据来源的参数沿用相应依据，缺少唯一工程定值或需要检验稳健性的参数明确作为灵敏度分析参数，不再以无来源的默认值代替；
-- 典型日权重、24 h 负荷曲线、逐典型日风电场景及场景概率直接读取 `data/RTS-GMLC/processed/rts_gmlc_v0.2.3_fixed_extreme_medoids/run_20260822_162606/` 中的实际结果；
-- 当前默认规模为 4 个典型日、每个典型日 4 个风电场景、每个典型日 24 个 1 h 时段；
-- 默认 RTS-GMLC D=4、K=4 时序输入文件随版本提供，数据来源和处理版本见 `data/RTS-GMLC/README.md` 及该结果目录的 `csv/source_manifest.csv`。
-- 参数维护入口仍为 `data/params/generate_multiple_snapshot_default_params.m`，运行时 JSON 由该脚本生成，二者应保持同步。
-- 设备级 GFL-WG 的 LVRT 参数与系统级 `params.GFL_WG` 参数保持一致，包括额定电流、LVRT 电压阈值、无功电流斜率及附加无功电流上限；
-- 系统级 GFM 电气参数由 `generate_multiple_snapshot_default_params.m` 统一维护，设备级模型通过运行时 JSON 恢复设备基准量，避免系统基准和设备基准混用；
-- `GFM_Inherited_Parameters.m` 集中管理 GFM 公共参数、控制器整定结果和系统级电气参数，`GFM_Parameters.m` 负责模型工作区映射、派生量计算和一致性检查；
-- GFM 模型进一步完善了可编程三相电源、PCC 耦合接口、虚拟阻抗限流状态机及启动/恢复工况验证，并保留参数来源追溯信息。
-
-用于代表日选择、极端日保留和储能成本参数核查的参考文献保存在 `docs/05_算例参数/`。新版 Section IV 参数待确认；历史参数需结合研究对象重新核实。
-
-## 设备级 GFL/GFM Simulink 模型
-
-本项目同时维护构网型变流器（GFM）与跟网型变流器（GFL）的设备级 Simulink 模型。设备级脚本已按用途分类，脚本调用应使用下列新路径。
-
-### 设备脚本目录
+MATPOWER、YALMIP 和 Gurobi 不随仓库分发。先将其加入 MATLAB 路径；时间尺度入口还支持通过 `MATPOWER_PATH`、`YALMIP_PATH`、`GUROBI_MATLAB_PATH` 或 `GUROBI_HOME` 定位依赖。添加 MATPOWER 路径时应避免将 `.github` 等元数据中的可选求解器测试包装加入搜索路径。
 
 ```text
-code/scripts/equipment/
-  GFL/
-    Find_CgSCR.m
-    GFL_Current_Loop_PI_Calculation.m
-    GFL_Parameters.m
-  GFM/
-    GFM_Current_Loop_PI_Calculation.m
-    GFM_Parameters.m
-    GFM_Voltage_Loop_PI_Calculation.m
-  Others/
-    Generator_Parameters.m
-    Invert_Generator_Parameters.m
-  for_report/
-    report_04/
-      Report04_Section5_3_Case_Study.m
-    report_05/
-      GFM_VI_Port_Characteristic_Validation.m
-      GFM_VI_State_Validation.m
+code/functions/                 参数读取、网络、优化、安全计算与结果处理
+code/scripts/system/            规划、灵敏度和时间尺度分析入口
+code/scripts/figure/for_paper/  论文绘图脚本
+code/scripts/equipment/         设备级参数与仿真脚本
+code/tests/                     自动化测试及模拟阶段求解夹具
+data/params/                    参数源 .m 和生成后的 JSON 快照
+data/RTS-GMLC/                  典型日/场景输入与来源说明
+results_useful/from_laptop/     既有归档和本地绘图输入
+simulink/models/                设备模型
+docs/                          模型迁移、参数与分析说明
+results/                       本地求解结果（忽略）
+figs/                          本地生成图
+logs/                          本地日志（忽略）
 ```
 
-### GFM 模型入口
-
-- 模型：`simulink/models/Grid_Forming_Inverters.slx`
-- 参数脚本：`code/scripts/equipment/GFM/GFM_Parameters.m`
-- 电流环整定：`code/scripts/equipment/GFM/GFM_Current_Loop_PI_Calculation.m`
-- 电压环整定：`code/scripts/equipment/GFM/GFM_Voltage_Loop_PI_Calculation.m`
-- 模型启动回调会根据模型文件位置定位项目根目录，不依赖 MATLAB 当前工作目录。
-- GFM 参数脚本独立定义基础参数、GFM 电流环、电压环、下垂控制和虚拟阻抗参数，不动态调用 GFL 参数脚本。
-
-GFM 控制链以 PCC 侧 P/Q 测量、P-f/Q-E 下垂控制、`vMid` 电压外环和 `i1` 电流内环为基础。`Future_Extensions_Hook` 预留可旁路的虚拟阻抗限流接口；旁路时应保持下垂参考电压不变。
-
-### 运行与验证
-
-在 MATLAB 中可使用以下方式加载 GFM 参数：
+以下 MATLAB 示例先在项目根目录执行（也可将 `pwd` 改为实际检出路径）：
 
 ```matlab
-Project_Root = 'D:\Project_With_Codex\Project_2';
-addpath(fullfile(Project_Root, 'code', 'functions', 'equipment'));
-run(fullfile(Project_Root, 'code', 'scripts', 'equipment', ...
-    'GFM', 'GFM_Parameters.m'));
+Project_Root = pwd;
+addpath(genpath(fullfile(Project_Root, 'code', 'functions')));
+addpath(fullfile(Project_Root, 'code', 'scripts', 'system'));
 ```
 
-GFM 模型的参数加载和一致性校验入口为：
+## 参数与风电不确定性
+
+参数维护入口为 `data/params/generate_multiple_snapshot_default_params.m`，输出 `data/params/multiple_snapshot_default_params.json`。修改默认参数时先修改脚本，再生成 JSON，避免快照被下一次运行覆盖。
+
+`%% 4. Security` 中的当前默认开关为：
 
 ```matlab
-addpath(fullfile(Project_Root, 'code', 'functions', 'equipment'));
-run(fullfile(Project_Root, 'code', 'scripts', 'equipment', ...
-    'GFM', 'GFM_Parameters.m'));
+params.Security.Enable_SCC = false;
+params.Security.Enable_SCR = false;
+params.Security.Consider_Wind_Uncertainty = 0;
 ```
 
-`GFM_Parameters.m` 会调用 `GFM_Inherited_Parameters.m`，读取系统级运行时 JSON，并将系统基准电气参数换算为设备基准量后提供给模型。脚本同时检查基准量、LCL 参数、控制器增益、下垂限幅、PCC 接口和虚拟阻抗参数之间的一致性。
+- `Consider_Wind_Uncertainty = 1`：采用每个典型日的完整原始 4 条风电场景及其原始概率，属于随机优化模型。
+- `Consider_Wind_Uncertainty = 0`：对每个典型日、节点、时段计算原始场景的概率加权平均，作为唯一风电轨迹；场景数和概率均设为 1，属于确定性模型。公式为 `P_mean(d,n,t) = sum_k pi(d,k) * P_available(d,n,k,t)`，保持原容量映射和 MW 单位。不会选取任意一条场景，也不会以等概率代替缺失的真实概率。
 
-GFM 模型入口为 `simulink/models/Grid_Forming_Inverters.slx`；虚拟阻抗端口特性和状态切换验证入口分别位于 `code/scripts/equipment/for_report/report_05/`。模型回调会根据模型文件位置定位项目根目录，不依赖 MATLAB 当前工作目录。
+原始输入为 4 个典型日、每日至 4 个风电场景、24 个 1 h 时段。风电开关只改变风电场景输入，负荷、典型日权重及运行约束保持原含义。仅风电可用功率作为随机输入。
 
-本项目研究高比例跟网型风电（GFL-WG）接入条件下，构网型储能（GFM-ES）的选址、定容与运行协同优化。新版模型联合考虑风电可用出力场景、同步机启停、GFM-ES 模块投建与储能运行、系统运行成本、SCC 上限和经典 SCR 下限。
+默认快照关闭 SCC/SCR 限值；完整随机安全模型须显式开启三个开关。式（29）—（30）的源支撑约束位于规划约束中，**不随 SCC/SCR 限值开关关闭**。节点、模块、LVRT、效率/SOC/额定时长、UC、成本与安全阈值均应结合目标算例核实。
 
-## 当前进度
+参数源支持可选 `Parameter_Generation_Options.Output_File` 和 `.Case_5=true`，用于独立生成“双安全约束开启、原始四场景”的 Case 5 快照，不覆盖默认 JSON。联合灵敏度扫描已使用此接口，详见[联合扫描说明](docs/scc_scr_joint_sensitivity.md)。
 
-默认模型采用考虑 GFL-WG 可用功率不确定性的场景随机多时段规划。新版实现包括：
+## 规划模型与入口
 
-- GFM-ES 模块投建变量跨典型日、风电场景和时段共享；UC 在同一典型日内跨风电场景共享，出力与网络运行量按场景和时段决策；
-- 安全网络按投建决策重构，采用无损电抗网络；故障节点 GFM-ES 虚拟阻抗修正、远端 GFL-WG 三段 LVRT 无功电流和非故障节点残压均进入 SCC 计算；
-- SCC 使用逐时 UC 并集状态的残压保守上界，SCR 使用交集状态下重构的 GFL 节点电抗列；不再使用旧版配置枚举、`lambda_c`、UC 状态枚举或旧 SCC 分步上界；
-- 式（29）源支撑约束用于日内交集安全网络，式（30）用于故障母线移除后的每个逐时连通分量；投建的 GFM-ES 在充电、放电和零有功时均提供构网支撑；
-- 标准 UC、DC 潮流、逐场景爬坡、最小开停机时间、循环储能能量及发电成本分段透视割沿用已有实现；典型日之间独立，日内 UC 和 SOC 按循环边界衔接。
-
-当前已增加GFL的LVRT与限流环节，并完成相应的Simulink仿真组织：
-
-- `Grid_Following_Inverters_LVRT.slx`支持自动电流参考和手动电流参考两种模式；
-- 手动参考电流仍经过LVRT和无功优先限流环节，不绕过故障穿越控制；
-- 参数脚本为 `code/scripts/equipment/GFL/GFL_Parameters.m`，默认手动参考由 `Manual_Current_Ref`、`Id_ref_manual` 和 `Iq_ref_manual` 控制；
-- 报告图5-2扫描脚本为 `code/scripts/figure/for_report/report_04/plot_fig_05_02.m`，输出位于 `figs/for_report/`；
-- Simulink模型统一位于 `simulink/models/`，缓存和代码生成文件统一位于 `simulink/artifacts/`；
-- 模型 `InitFcn` 已自动配置Simulink生成目录，手动运行模型时不再依赖当前工作目录。
-
-安全状态仅在典型日内跨时段聚合，不随风电场景复制。UC 状态并集/交集由逐时二进制变量及线性约束直接构造；二进制—连续变量乘积采用有效界下的精确 McCormick 线性化，LVRT 三段响应采用精确 MILP 表达。
-
-## 历史参数与时序数据说明
-
-以下数据记录来自迁移前的算例准备，不构成新版 Section IV 的参数确认：
-
-- 参数源位于 `data/params/generate_multiple_snapshot_default_params.m`，生成 JSON 快照 `data/params/multiple_snapshot_default_params.json`；主入口每次运行都会重新生成该快照。
-- 仓库中的 RTS-GMLC 典型日和风电场景数据来自 `data/RTS-GMLC/processed/`，可复用原有数据读取和场景概率处理流程。
-- 现有参数源中的模块位置、额定容量、成本、LVRT、电抗、SCC/SCR 限值及 UC 参数仍是历史算例设置。运行新版模型前，须由用户按新版算例确认或替换这些输入；本项目不把历史结果作为新版正确答案。
-
-## 运行入口
-
-场景随机多时段模型的主入口为：
-
-```text
-code/scripts/system/run_multiple_snapshot_planning.m
-```
-
-对应的参数源与生成后的JSON文件为：
-
-```text
-data/params/generate_multiple_snapshot_default_params.m
-data/params/multiple_snapshot_default_params.json
-```
-
-长时间求解可使用：
-
-```text
-code/scripts/system/start_multiple_snapshot_planning_longrun.m
-```
-
-在 MATLAB 中配置依赖并启动主脚本：
+主入口保持 MATLAB **脚本**形式：
 
 ```matlab
-Project_Root = 'D:\Project_With_Codex\Project_2';
-addpath(genpath(fullfile(Project_Root, 'code')));
-clear Parameter_File % 清除后使用默认JSON；也可在此设置为经确认的JSON路径。
+clear Parameter_File Parameter_Generation_Options
 run(fullfile(Project_Root, 'code', 'scripts', 'system', ...
     'run_multiple_snapshot_planning.m'));
 ```
 
-新版 Section IV 参数需先确认。主脚本会求解完整算例；小规模测试入口见迁移说明。
+未设置 `Parameter_File` 时，入口重新运行参数生成脚本；若先将该变量设为已有 JSON 的路径，则直接读取指定文件。主入口按参数执行单阶段或两阶段求解，保存结果后调用环境中的 `mailTome` 发送完成通知。仓库不提供该外部通知函数；缺少它时通知步骤可能报错，已保存的规划结果仍保留。后台入口为 `start_multiple_snapshot_planning_longrun.m`。
 
-多时段主脚本按当前单阶段或两阶段配置求解算例。未提供 `Parameter_File` 时会先执行参数生成脚本；提供该变量时则直接使用指定 JSON，不会覆盖它。代码保留典型日维度映射和历史结果热启动能力。维护默认参数时应优先修改参数源 `.m` 文件，避免直接修改随后会被覆盖的JSON文件。
+只构建模型而不求解，可使用：
 
-脚本运行会调用 `mailTome` 发送结束通知；若当前 MATLAB 环境未配置该函数，规划结果仍会在求解完成后保存，但通知步骤可能报错。新版模型仅使用 Gurobi 作为 MILP 求解器。
-
-未指定 `Parameter_File` 时，参数生成脚本依赖上述 RTS-GMLC 运行目录中的 `rts_gmlc_typical_days_and_wind_scenarios_20260822_162606.mat`。仓库通过 `*.mat` 规则忽略 MAT 文件，因此该 16.3 MiB 时序源文件不随代码提交；运行前需在约定的相对路径准备该文件。生成后的 JSON 参数快照纳入版本控制。
-
-## 新版算例参数待确认
-
-新版 Section IV 尚未给出经确认的算例参数。请在采用新版模型形成论文算例前，确认并配置网络基准和线路参数、GFL-WG 接入节点及聚合参数、GFM-ES 候选节点和逐模块参数、LVRT 参数、SCC/SCR 限值、典型日与场景数据及 UC 参数。特别是同一节点的 GFM-ES 模块需满足论文 Section III-C 的相同效率、SOC 和额定时长条件。仓库现有参数值和历史结果不代表新版模型的默认算例或正确答案。
-
-## 2026-09 Result 输出精简与逐时安全后验复算
-
-新版结果保留聚合安全指标，并提供基于最终规划决策的逐时后验安全指标：
-
-- `Result.SCC_1` 保留为典型日同步机并集工况下的聚合 SCC 保守上界；它不代表实际逐时 SCC；
-- `Result.SCR` 保留为典型日同步机交集工况下的聚合经典 SCR 下界；它不代表实际逐时 SCR；
-- 新增 `Result.SCC_TimeResolved`，概念维度为 `[period, typical_day, scc_security_node]`，单位为 kA；
-- 新增 `Result.SCR_TimeResolved`，概念维度为 `[period, typical_day, gfl_node]`，为无量纲经典 SCR；
-- 逐时后验使用最终 GFM-ES 投建状态和实际 `u_G(generator, typical_day, period)`，独立于 SCC/SCR 约束辅助变量；
-- 逐时 SCC/SCR 的原始节点映射记录在 `Result.SafetyNetwork`、`Result.SCC_Definition` 和 `Result.SCR_Definition` 中；
-- `Result.SecurityValidation` 记录聚合 SCC 上界与逐时 SCC 最大值、聚合 SCR 下界与逐时 SCR 最小值的数值容差、最大违反量及位置。
-
-新版结果不含配置枚举变量 `lambda_c` 或 UC 状态枚举字段。旧版结果字段仅适用于 `ModelVersion='legacy'`。保存的 `Result.solve_time` 是进入单次求解至结果提取和逐时后处理完成的墙钟时间；`Result.Diagnostics.solvertime` 是求解器内部时间，`yalmiptime` 是 YALMIP `optimize` 调用开销。
-
-新版安全网络与约束分别由 `prepare_converter_security_network.m`、`add_converter_security_constraints.m` 和 `add_lvrt_segment_constraints.m` 实现；`calculate_converter_security_state.m` 与 `calculate_converter_security_metrics.m` 用于逐时后验计算和聚合保守性检查。旧版安全约束函数保留在代码库中，仅由 legacy 路径使用。
-
-## 核心文件
-
-```text
-code/functions/optimization/solve_multiple_snapshot_planning.m
-code/functions/optimization/build_multiple_snapshot_planning_model.m
-code/functions/security/add_converter_security_constraints.m
-code/functions/security/add_lvrt_segment_constraints.m
-code/functions/network/prepare_converter_security_network.m
-code/functions/security/calculate_converter_security_state.m
-code/functions/security/calculate_converter_security_metrics.m
-code/functions/io/load_multiple_snapshot_case.m
-code/functions/io/package_multiple_snapshot_result.m
-code/functions/equipment/configure_simulink_file_generation.m
-code/functions/equipment/configure_simulink_file_generation_from_model.m
+```matlab
+Parameter_File = fullfile(Project_Root, 'data', 'params', ...
+    'multiple_snapshot_default_params.json');
+[mpc, CONF] = load_multiple_snapshot_case(Project_Root, Parameter_File);
+Model = build_multiple_snapshot_planning_model(mpc, CONF);
+assert(all(is(Model.Constraints, 'linear')));
+assert(degree(Model.Objective) <= 1);
 ```
 
-新版主模型在每个典型日内按同步机状态并集和交集分别构造 SCC、SCR 安全约束。两类聚合安全网络均不随风电场景复制；逐时 SCC/SCR 在求解完成后按实际 UC 状态重构，不把聚合指标填充到逐时数组。
+新版实现的关键关系：
 
-## 结果与复核
+- GFM-ES 投建跨典型日、场景及时段共享；UC 在同一典型日内跨风电场景共享。有功、潮流、弃风、充放电和能量按场景、时段建模。
+- Aggregated 以日内 UC 并集计算 SCC 上界，以交集计算 SCR 下界；安全网络不随风电场景复制。
+- SCC 联立计算故障点虚拟阻抗修正、非故障节点残压及远端 GFL-WG 三段 LVRT 电流；二进制乘积采用有效界下的精确 McCormick 约束。
+- 源支撑覆盖安全网络和故障母线移除后的连通分量；已投建 GFM-ES 在充电、放电及零有功状态下均提供构网支撑。
+- 复用标准 UC、DC 潮流、分段透视成本割及储能约束。典型日之间独立，日内 UC、爬坡、最小开停机时间和 SOC 采用循环衔接。
 
-求解结果默认写入 `results/`。该目录及求解器日志、MATLAB结果文件均不纳入Git版本控制。建议至少检查：
+`ModelVersion='2026-10-23'` 为默认新版。旧配置枚举、`lambda_c`、UC 状态枚举和旧 SCC 分步上界仅保留在显式 `ModelVersion='legacy'` 路径中。公式与文件映射见[模型迁移说明](docs/model_migration_20261023.md)。
 
-- `Diagnostics.problem`、最优间隙和是否存在可行整数解；
-- `u_GFM_Module`、`u_SG`、`u_SG_Start` 与 `u_SG_Stop`；
-- 场景名称、概率及 `[元件,典型日,场景,时段]` 运行结果维度；
-- 各场景节点功率平衡、线路限额和机组出力边界；
-- 各场景GFM-ES充放电互斥、SOC范围及典型日末SOC；
-- GFL-WG场景可用出力、额定功率、实际出力和弃风功率之间的关系；
-- `SCC_1` 与逐时 `SCC_TimeResolved` 的安全裕度及聚合保守性；
-- 聚合 `SCR` 与逐时 `SCR_TimeResolved` 的安全裕度及聚合保守性；
-- 保存的聚合阻抗矩阵与最终整数状态直接重构结果是否一致；
-- `solve_time`、`Diagnostics.solvertime` 和 `Diagnostics.yalmiptime` 的计时含义。
+## 五个 Case 与论文绘图
 
-当前显式场景没有自然基准场景。需要单场景复核时，应明确选用的场景编号并将其概率设为 1，再使用确定性退化检查函数验证输入轨迹、运行权重及结果；不应把任意场景静默解释为基准场景。
+五个 Case 的绘图读取本地 `results_useful/from_laptop/IV-B/Case_1_Stage_2.mat` 至 `Case_5_Stage_2.mat`。本地已核验这些结果均记录新版模型及逐时 SCC/SCR；本次提交不新增或更新 MAT 输入，其他设备需自行提供这些归档。绘图只读结果，不重新优化。
 
-模型中的同步机二次成本采用分段透视割近似，因此报告成本与原始二次成本可能存在小幅误差。当前已验证算例中的误差约为0.21%。
+| Case | SCC 上限 | SCR 下限 | 风电模型 |
+| --- | --- | --- | --- |
+| 1 | 关闭 | 关闭 | 确定性，1 场景 |
+| 2 | 关闭 | 开启 | 确定性，1 场景 |
+| 3 | 开启 | 关闭 | 确定性，1 场景 |
+| 4 | 开启 | 开启 | 确定性，1 场景 |
+| 5 | 开启 | 开启 | 随机，4 场景 |
 
-## 项目结构
+绘图入口均位于 `code/scripts/figure/for_paper/`：
 
-```text
-code/
-  scripts/system/      主运行脚本、路径解析与后台启动入口
-  scripts/equipment/   设备级仿真与参数计算脚本
-  scripts/figure/      调试图和报告图生成脚本
-  functions/equipment/ Simulink设备仿真与生成目录配置函数
-  functions/           数据加载、网络构建、优化、安全约束与结果输出
-simulink/
-  models/              Simulink模型文件
-  artifacts/           Simulink缓存、slprj和代码生成文件（Git忽略）
-data/
-  params/              默认参数源脚本及生成后的JSON参数文件
-docs/                  模型文档、论文材料与环境说明
-results/               本地优化结果（Git忽略）
-logs/                  本地运行日志（Git忽略）
+| 脚本 | 内容与输入 |
+| --- | --- |
+| `plot_fig3_security_metrics.m` | 五个 Case 的逐时最大 SCC、最小 SCR 与限值 |
+| `plot_fig4_selected_uc_schedules.m` | Case 2/4/5、Day 2 的 Bus 2/23 UC；已移除 Bus 22，配色与 Fig. 3 一致 |
+| `plot_fig5_scc_conservatism_scatter.m` | 五个 Case 的逐时最大 SCC 与并集 SCC 上界 |
+| `plot_fig6_scr_conservatism_scatter.m` | 五个 Case 的逐时最小 SCR 与交集 SCR 下界 |
+| `plot_fig6_scc_sensitivity.m` | `IV-C/SCC` 归档的 8 个 SCC 阈值结果 |
+| `plot_fig7_scr_sensitivity.m` | `IV-C/SCR` 归档的 6 个 SCR 阈值结果 |
+| `plot_fig8_temporal_model_size.m` | 读取 `from_desktop/IV-D` 的 T=3/6/12/24 模型规模归档 |
+| `plot_fig9_temporal_solution_time.m` | 读取同一时间尺度归档的分阶段求解时间 |
+
+历史文件名保留既有编号，因此两个不同用途的脚本含 `fig6`；调用时使用完整文件名。Fig. 8/9 所需的完整四尺度归档未随本次提交提供，当前新版 T=3 验证不能填补其余三个尺度。
+
+在所需本地 MAT 归档齐备后，最小绘图命令为（无需求解器许可证）：
+
+```matlab
+run(fullfile(Project_Root, 'code', 'scripts', 'figure', ...
+    'for_paper', 'plot_fig3_security_metrics.m'));
 ```
 
-`docs/`中的PDF和Word材料默认不提交。Git不会保存空目录；如需长期保留文档分类目录，应加入可跟踪的说明文件或 `.gitkeep`。
+将文件名替换为表中其他入口即可生成对应图。输出位于 `figs/for_paper/`，包括脚本各自导出的 FIG、PDF、PNG 和统计 CSV。
 
-## 环境依赖
+**版本区别：** `IV-C/SCC` 和 `IV-C/SCR` 是旧版灵敏度归档，含 `lambda_c`，未记录新版 `ModelVersion`。它们用于重绘已有分析图，不验证新版 SCC 或新版灵敏度趋势；新计算应使用当前模型重新求解并保存独立结果。
 
-- MATLAB R2024b
-- MATPOWER（提供 `case30`；当前本地验证版本为 7.1）
-- YALMIP（提供 `optimize`；跨设备运行请使用同一版本）
-- Gurobi MATLAB API 与有效许可证（当前本地 IV-D 验证使用 Gurobi 12.0.3）
+## 新版时间尺度对照（当前仅 T=3）
 
-IV-D 入口优先使用已在 MATLAB 路径中的依赖。若依赖未加入路径，可在启动 MATLAB 前设置 `MATPOWER_PATH`、`YALMIP_PATH` 和 `GUROBI_MATLAB_PATH`；也可设置 `GUROBI_HOME` 指向 Gurobi 安装目录。扫描所需的 RTS-GMLC `.mat` 输入已随仓库提供。硬件、并行线程和求解器版本会影响运行时间以及多线程求解路径；代码固定了输入生成规则和模型求解参数，但不承诺跨设备逐位一致的运行时间或解向量。
-
-MATLAB后台启动与环境配置说明见：
-
-```text
-docs/matlab_environment_note.md
+```matlab
+run(fullfile(Project_Root, 'code', 'scripts', 'system', ...
+    'run_temporal_scalability_analysis.m'));
 ```
 
-## 后续工作
+该入口会实际启动优化。当前 `Period_Counts = 3`，总时长保持 24 h，每段 8 h。入口读取现有默认 JSON 的物理与求解设置，在独立运行目录生成 SCC/SCR 全开、4 典型日、原始 4 场景的输入，不覆盖默认 JSON。
 
-- 继续补充可获得的工程数据与文献依据，并校准 GFM-ES 功率、能量、成本与故障电流参数；
-- 对缺少唯一工程定值或可能显著影响结果的线路强度、短路电流上限、SCR 下限、GFM-ES 成本及设备故障电流参数开展灵敏度分析；
-- 比较安全工况交并集聚合与逐时安全约束的保守性；
-- 引入构网容量要求或辅助服务价值；
-- 接入外部生成或缩减后的风电场景，并评估场景数量对求解规模的影响；
-- 在场景随机优化基础上进一步研究分布鲁棒配置模型。
+Aggregated 和 Period-Wise 均调用新版公共模型，投建/UC 决策、场景运行、成本和求解设置相同；区别仅为安全约束采用日内并集/交集状态，或逐时实际 UC 状态。旧版 legacy 不是该实验的对照模型，PW 也不再使用 5 倍时限。
 
-## 2026-07 当前进度与常规备份
+从 24 个小时连续分块取平均，保持负荷和风电的日能量；典型日权重与原始场景概率不变。最小开停机时间按新时长向上取整，爬坡参数保持 MW/h 含义。两模型使用相同的阶段原生时限（当前 300/900 s）与目标 gap（0.005）；Stage 2 的名义 `Time_Limit=1800` 被原生 Gurobi `TimeLimit=900` 覆盖，比较时以实际原生选项为准。
 
-当前项目已完成以下阶段性工作：
+结果保存到 `results/multiple_snapshot_temporal_scalability_<timestamp>/`，包括冻结基准 JSON、各 T 输入、AG/PW 分阶段 MAT 与汇总 MAT/CSV。2026-10-24 的 T=3 单次验证记录如下，时间取决于硬件和求解环境：
 
-- 建立了 IEEE-30 系统、多典型日、多风电场景的模块化 GFM-ES 配置优化模型；
-- 完成了参数审计，报告见 `docs/parameter_audit_report.md`；
-- 去除了同步机发电成本中的常数项；
-- 将同步机启机成本设置为 5% 额定出力成本的 1.0 倍，将关停成本设置为该成本的 0.25 倍；
-- 保留了同步机 UC、GFL-WG 弃风成本、GFM-ES 投建成本与储能运行约束；
-- 已形成仅考虑经济性约束的算例结果：`results/multiple_snapshot_planning_result_20260717_103238.mat`；
-- 已根据该结果生成同步机 UC 状态图，图表位于 `figs/economic_20260717_103238/02_operation/`；其中 D01 典型日的同步机启停次数最多，共 4 次启动和 4 次关停；
-- 上述经济性结果由历史上的纯经济性约束版本生成；当前求解函数已按论文第2.1节至第2.5节装配包含安全约束的完整集合。经济性结果中的安全相关后处理不应作为安全性结论。
+| 指标 | Aggregated | Period-Wise |
+| --- | --- | --- |
+| 标量变量 | 11,086 | 14,382 |
+| 二进制变量 | 534 | 774 |
+| 标量约束 | 24,389 | 32,869 |
+| 年总成本 | 2,323,417.2745 | 2,323,417.2745 |
+| 两阶段流程时间 / s | 7.058 | 18.696 |
 
-本次提交用于项目当前状态的常规备份。后续工作包括：完善经济性算例专用后处理、补充安全约束算例对照、开展参数灵敏度分析，并进一步核查 GFM-ES 成本和故障电流参数的工程依据。
+流程时间包括建模、求解、提取及后验复算，不等同于 Gurobi 内部时间。该次两模型的功率平衡最大误差为 `1.64e-13 MW` 以内，成本复算误差为 `7e-10` 以内，并通过逐时安全复核及 MILP 结构检查；最优解未投建储能，因此该次运行不覆盖非零储能运行。T=6/12/24 未在本轮执行。
+
+## 灵敏度分析与测试
+
+- `run_scc_sensitivity_analysis.m`、`run_scr_sensitivity_analysis.m`：一维扫描，会重新生成默认 JSON；运行前须在参数源启用 SCC、SCR 和原始四场景，并满足扫描函数的基准检查。
+- `run_scc_scr_joint_sensitivity_analysis.m`：二维 Case 5 扫描，冻结独立输入、保存完整诊断并支持校验后续算。**当前入口 `Execute_Full_Scan=true`，运行会求解 6×6 网格**；若只准备输入，应先设为 `false`。底层函数 `Options.Execute` 缺省为 `false`。详见[联合扫描说明](docs/scc_scr_joint_sensitivity.md)。
+
+轻量回归测试使用模拟阶段求解器，不调用实际优化：
+
+```matlab
+runtests(fullfile(Project_Root, 'code', 'tests', ...
+    'test_scc_scr_joint_sensitivity.m'))
+```
+
+当前 6 项测试全部通过，覆盖原始场景与概率、网格索引、模块映射、成本、状态分类、结果完整性、续算和考虑 MIP 区间的单调性检查。本次文档/同步工作未启动真实联合网格求解。早期模型迁移的独立测试记录见迁移说明，不将旧版数值结果作为新版回归答案。
+
+同步前另完成默认配置 MILP 构建检查；原始场景概率和误差及确定性加权平均轨迹误差均为 0，确定性输入尺寸为 `[30,4,1,24]`。使用本地归档实际运行了 Fig. 3、UC 图、两张保守性散点图及两张灵敏度图的六个脚本，均成功导出；这些 MAT 输入与生成图未纳入本次提交。26 个待提交 MATLAB 文件静态检查仅有动态扩展、未使用变量或多余抑制标记提示。
+
+结果复核应同时查看 `Diagnostics.problem`、原生 `solver_status`、是否存在可行整数解和 gap。新版 `Result.SCC_1`/`SCR` 分别为并集上界/交集下界；`SCC_TimeResolved`/`SCR_TimeResolved` 为最终决策下实际逐时后验值，不能混用。`SecurityValidation` 和 `Diagnostics.SecurityPosthocRegression` 记录相应保守性或辅助变量复算检查。
+
+## 随版本提供的数据边界
+
+复现参数生成所需的 16.3 MiB 原始场景 MAT **已纳入版本控制**：
+
+```text
+data/RTS-GMLC/processed/rts_gmlc_v0.2.3_fixed_extreme_medoids/
+  run_20260822_162606/
+    rts_gmlc_typical_days_and_wind_scenarios_20260822_162606.mat
+```
+
+数据来源见 [RTS-GMLC 说明](data/RTS-GMLC/README.md) 和该目录的 `csv/source_manifest.csv`、`run_metadata.csv`。参数生成和本文列出的分析不需要额外提交完整上游原始数据副本、年度 CSV、Excel 副本或重复中间结果。
+
+本次同步不新增或更新 MAT 文件。已有受版本控制的源场景文件和历史结果保持原状；新增绘图所需的本地输入须另行准备：IV-B 五个 Stage-2 MAT、IV-C 的 8 个 SCC 与 6 个 SCR MAT，或 Fig. 8/9 的完整时间尺度归档。具体文件名见相应脚本开头和数据校验函数；缺少输入时脚本会报出路径，不会自动补造数据。新求解结果、求解日志、生成图、设备调试输出、缓存、本地论文 DOCX/PDF 和许可证也不属于本次同步范围。
+
+## 设备级模型
+
+设备模型位于 `simulink/models/`。GFM 参数入口为 `code/scripts/equipment/GFM/GFM_Parameters.m`，经 `GFM_Inherited_Parameters.m` 读取系统级 JSON 并换算设备基准；GFL 参数入口为 `code/scripts/equipment/GFL/GFL_Parameters.m`。报告验证脚本位于 `code/scripts/equipment/for_report/`，相关绘图位于 `code/scripts/figure/for_report/`。
+
+系统规划的额定电流、LVRT 和虚拟电抗采用参数文件中的单位与基准；设备仿真需使用匹配的参数快照。Simulink 缓存写入被忽略的 `simulink/artifacts/`。本次同步聚焦算例分析，不包含本地设备模型或教学材料的额外改动。

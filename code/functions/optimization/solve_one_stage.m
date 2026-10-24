@@ -1,5 +1,6 @@
-function [Result, Result_File] = solve_one_stage(mpc, CONF, paths)
+function [Result, Result_File] = solve_one_stage(mpc, CONF, paths, Return_No_Incumbent)
 %% 执行一次求解、归档结果并打印摘要。
+if nargin < 4, Return_No_Incumbent = false; end
 
 CONF = normalize_multiple_snapshot_conf(CONF);
 Planning_Function = @solve_multiple_snapshot_planning;
@@ -8,13 +9,27 @@ if strcmp(CONF.ModelVersion,'legacy')
 end
 
 tic;
+Extra_Arguments = {};
+if Return_No_Incumbent
+    assert(~strcmp(CONF.ModelVersion,'legacy'), ...
+        'No-incumbent diagnostic return is supported only by the new model.');
+    Extra_Arguments = {true};
+end
 [~,SCC_1,~,P_Line,theta,P_G,P_GFL,P_GFM,SCR,Z_SCC,Z_SCR, ...
     ~,u_G,u_G_SCC,u_G_SCR,Cost_CON,Cost_GEN,Cost_Total,Diagnostics, ...
     u_GFM_Module,P_GFM_Dis,P_GFM_Ch,E_GFM,u_GFM_Ch,P_GFL_Curt,Cost_Curt, ...
     u_G_Start,u_G_Stop,Cost_UC,SCC_TimeResolved,SCR_TimeResolved, ...
     SecurityValidation] = ...
-    Planning_Function(mpc, CONF);
+    Planning_Function(mpc, CONF, Extra_Arguments{:});
 Solve_Time = toc;
+
+if Return_No_Incumbent && ~Diagnostics.has_incumbent
+    Result = struct('CONF', CONF, 'Diagnostics', Diagnostics, ...
+        'solve_time', Solve_Time);
+    Result_File = save_multiple_snapshot_result(Result, paths.results_dir);
+    fprintf('No incumbent; diagnostics saved: %s\n', Result_File);
+    return;
+end
 
 Result = package_multiple_snapshot_result( ...
     SCC_1,SCC_TimeResolved,P_Line,theta,P_G,P_GFL,P_GFM,SCR, ...

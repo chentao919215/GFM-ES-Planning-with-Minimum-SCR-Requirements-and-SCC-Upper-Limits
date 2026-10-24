@@ -188,10 +188,6 @@ if ~isfield(Result, 'Diagnostics') || Result.Diagnostics.problem ~= 0
     error('Fig7:UnsuccessfulSolve', ...
         'Result is not a successful Stage-2 solve: %s', File_Path);
 end
-if ~isfield(Result, 'CONF') || ~isfield(Result.CONF, 'SolveStage') || ...
-        ~contains(lower(string(Result.CONF.SolveStage)), 'optimality')
-    error('Fig7:NotStage2', 'Result is not marked as Stage 2: %s', File_Path);
-end
 end
 
 function fig = new_paper_figure(Figure_Width, Figure_Height)

@@ -12,7 +12,7 @@ if ~isfolder(Output_Directory)
     mkdir(Output_Directory);
 end
 
-Expected_Limits_kA = [7.6 6.5 6.0 5.9 5.8 5.7 5.5];
+Expected_Limits_kA = [7.6 6.5 6.0 5.9 5.8 5.7 5.6 5.5];
 [Results, Result_Files, SCC_Limits_kA] = load_scc_stage2_results( ...
     Results_Directory, Expected_Limits_kA);
 

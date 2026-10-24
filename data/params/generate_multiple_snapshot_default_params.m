@@ -5,6 +5,11 @@
 clear params;
 Parameter_Directory   = fileparts(mfilename('fullpath'));
 Output_File = fullfile(Parameter_Directory, 'multiple_snapshot_default_params.json');
+% 可选调用方覆盖仅用于独立参数快照；未提供时保持原入口行为。
+if exist('Parameter_Generation_Options', 'var') && ...
+        isfield(Parameter_Generation_Options, 'Output_File')
+    Output_File = char(Parameter_Generation_Options.Output_File);
+end
 
 %% 0. 读取MATPOWER基准案例
 mpc = case30;
@@ -89,11 +94,21 @@ params.GFM_Modules.Electrical.X_GFM_Res = ...
 %% 4. Security
 % 短路电流上限、SCR下限及源在线约束。
 params.Security = struct();
-params.Security.Enable_SCC = true;
-params.Security.Enable_SCR = true;
-params.Security.I_limit_kA = 5.7; % kA
+params.Security.Enable_SCC = false;
+params.Security.Enable_SCR = false;
+% 1采用多场景随机优化；0采用原始场景概率加权平均的单场景确定性优化。
+params.Security.Consider_Wind_Uncertainty = 0;
+params.Security.I_limit_kA = 5.6; % kA
 params.Security.SCR_min = 2.8;
 params.Security.Require_Source_Online = true;
+% 必须在生成风电轨迹之前设置，避免仅改开关却保留确定性平均轨迹。
+if exist('Parameter_Generation_Options', 'var') && ...
+        isfield(Parameter_Generation_Options, 'Case_5') && ...
+        isequal(Parameter_Generation_Options.Case_5, true)
+    params.Security.Consider_Wind_Uncertainty = 1;
+    params.Security.Enable_SCC = true;
+    params.Security.Enable_SCR = true;
+end
 
 %% 5. Multiple_Snapshot
 % 典型日、时段、负荷曲线以及风电场景参数。
@@ -111,12 +126,36 @@ end
 load(RTS_GMLC_Result_File, 'Result');
 
 Selected_D = 4;
-Selected_K = 4;
 D_Index = find([Result.Typical_Day_Sets.D] == Selected_D, 1);
 if isempty(D_Index)
     error('指定的RTS-GMLC时序结果中不存在D=%d的典型日。', Selected_D);
 end
 Typical_Days = Result.Typical_Day_Sets(D_Index);
+D = Typical_Days.Total_Typical_Day_Count;
+T = Result.Dimensions.Period_Count;
+Load_Factor = Typical_Days.System_Load_Normalized;
+Wind_DA_Factor = Typical_Days.Wind_DA_System_Normalized;
+Consider_Wind_Uncertainty = params.Security.Consider_Wind_Uncertainty;
+if ~isnumeric(Consider_Wind_Uncertainty) || ...
+        ~isscalar(Consider_Wind_Uncertainty) || ...
+        ~isfinite(Consider_Wind_Uncertainty) || ...
+        ~ismember(Consider_Wind_Uncertainty, [0, 1])
+    error('Security.Consider_Wind_Uncertainty必须为0或1。');
+end
+
+if D ~= Selected_D || T ~= 24 || ...
+        Result.Dimensions.Period_Duration_Hours ~= 1
+    error('指定时序数据应满足D=4且每个典型日包含24个1 h时段。');
+end
+if ~isequal(size(Load_Factor), [D, T]) || ...
+        ~isequal(size(Wind_DA_Factor), [D, T])
+    error('指定RTS-GMLC典型日数据的维度与D、T不一致。');
+end
+if any(~isfinite(Load_Factor(:))) || any(Load_Factor(:) < 0) || ...
+        any(~isfinite(Wind_DA_Factor(:))) || any(Wind_DA_Factor(:) < 0)
+    error('指定RTS-GMLC负荷与日前风电时序应为有限非负数。');
+end
+Selected_K = 4;
 Scenario_Row = Result.Wind_Scenario_Sets(D_Index, :);
 K_Index = find([Scenario_Row.K] == Selected_K, 1);
 if isempty(K_Index)
@@ -128,35 +167,28 @@ if ~Wind_Scenarios.Available
     error('指定的D=%d、K=%d风电场景不可用：%s', ...
         Selected_D, Selected_K, Wind_Scenarios.Unavailable_Reason);
 end
-
-D = Typical_Days.Total_Typical_Day_Count;
 K = Wind_Scenarios.K;
-T = Result.Dimensions.Period_Count;
-Load_Factor = Typical_Days.System_Load_Normalized;
-Wind_DA_Factor = Typical_Days.Wind_DA_System_Normalized;
 Wind_Scenario_Factor = Wind_Scenarios.Wind_Scenario_Normalized;
 Scenario_Probabilities = Wind_Scenarios.Probability;
-
-if D ~= Selected_D || K ~= Selected_K || T ~= 24 || ...
-        Result.Dimensions.Period_Duration_Hours ~= 1
-    error('指定时序数据应满足D=4、K=4且每个典型日包含24个1 h时段。');
-end
-if ~isequal(size(Load_Factor), [D, T]) || ...
-        ~isequal(size(Wind_DA_Factor), [D, T]) || ...
+if K ~= Selected_K || ...
         ~isequal(size(Wind_Scenario_Factor), [D, K, T]) || ...
         ~isequal(size(Scenario_Probabilities), [D, K])
-    error('指定RTS-GMLC典型日或风电场景数据的维度与D、K、T不一致。');
+    error('指定RTS-GMLC风电场景数据的维度与D、K、T不一致。');
 end
-if any(~isfinite(Load_Factor(:))) || any(Load_Factor(:) < 0) || ...
-        any(~isfinite(Wind_DA_Factor(:))) || any(Wind_DA_Factor(:) < 0) || ...
-        any(~isfinite(Wind_Scenario_Factor(:))) || ...
+if any(~isfinite(Wind_Scenario_Factor(:))) || ...
         any(Wind_Scenario_Factor(:) < 0)
-    error('指定RTS-GMLC负荷与风电时序应为有限非负数。');
+    error('指定RTS-GMLC风电场景时序应为有限非负数。');
 end
 if any(~isfinite(Scenario_Probabilities(:))) || ...
         any(Scenario_Probabilities(:) <= 0) || ...
         any(abs(sum(Scenario_Probabilities, 2) - 1) > 1e-12)
     error('指定RTS-GMLC风电场景概率应为正数且逐典型日合计为1。');
+end
+if Consider_Wind_Uncertainty == 0
+    % 先在归一化轨迹上按典型日概率加权，再统一映射节点额定容量。
+    Wind_Deterministic_Factor = sum(Wind_Scenario_Factor .* ...
+        reshape(Scenario_Probabilities, D, K, 1), 2);
+    K = 1;
 end
 if any(Typical_Days.Weight_Days <= 0) || ...
         sum(Typical_Days.Weight_Days) ~= 365
@@ -181,22 +213,31 @@ params.Multiple_Snapshot.Profiles.Load_P_MW = ...
 
 GFL_Rated_Node = zeros(size(mpc.bus, 1), 1);
 GFL_Rated_Node(params.GFL_WG.Built_Nodes) = params.GFL_WG.PN_MW;
-% 确定性基准接口采用典型日的日前风电曲线。
+% 兼容接口保留典型日日前曲线；确定性场景由下方原始场景概率加权生成。
 params.Multiple_Snapshot.Profiles.GFL_Available_P_MW = ...
     reshape(GFL_Rated_Node, size(mpc.bus, 1), 1, 1) .* ...
     reshape(Wind_DA_Factor, 1, D, T);
 
 params.Multiple_Snapshot.Wind_Scenarios = struct();
 params.Multiple_Snapshot.Wind_Scenarios.Count = K;
-params.Multiple_Snapshot.Wind_Scenarios.Names = ...
-    arrayfun(@(k) sprintf('scenario_%d', k), 1:K, ...
-    'UniformOutput', false);
-params.Multiple_Snapshot.Wind_Scenarios.Probabilities = ...
-    Scenario_Probabilities;
 params.Multiple_Snapshot.Wind_Scenarios.Generation_Mode = 'explicit';
-params.Multiple_Snapshot.Wind_Scenarios.P_GFL_Available_Scenarios = ...
-    reshape(GFL_Rated_Node, size(mpc.bus, 1), 1, 1, 1) .* ...
-    reshape(Wind_Scenario_Factor, 1, D, K, T);
+if Consider_Wind_Uncertainty == 1
+    params.Multiple_Snapshot.Wind_Scenarios.Names = ...
+        arrayfun(@(k) sprintf('scenario_%d', k), 1:K, ...
+        'UniformOutput', false);
+    params.Multiple_Snapshot.Wind_Scenarios.Probabilities = ...
+        Scenario_Probabilities;
+    params.Multiple_Snapshot.Wind_Scenarios.P_GFL_Available_Scenarios = ...
+        reshape(GFL_Rated_Node, size(mpc.bus, 1), 1, 1, 1) .* ...
+        reshape(Wind_Scenario_Factor, 1, D, K, T);
+else
+    % 确定性模式使用原始场景概率加权平均轨迹，概率为1。
+    params.Multiple_Snapshot.Wind_Scenarios.Names = {'deterministic'};
+    params.Multiple_Snapshot.Wind_Scenarios.Probabilities = ones(D, 1);
+    params.Multiple_Snapshot.Wind_Scenarios.P_GFL_Available_Scenarios = ...
+        reshape(GFL_Rated_Node, size(mpc.bus, 1), 1, 1, 1) .* ...
+        reshape(Wind_Deterministic_Factor, 1, D, 1, T);
+end
 
 %% 6. UC
 % 同步机最小出力、爬坡、最小开停机时间和启停成本。
@@ -258,13 +299,14 @@ params.solver.options.quiet = struct();
 params.solver.options.quiet.yalmip = struct('verbose', 0);
 params.solver.options.quiet.gurobi = struct( ...
     'OutputFlag', 0, 'LogToConsole', 0, 'LogFile', '');
+
 % 两阶段覆盖使用Gurobi原生参数。
 params.Solver.Two_Stage.Stage_1.Options = struct();
 params.Solver.Two_Stage.Stage_1.Options.gurobi = struct( ...
     'TimeLimit', 300, 'MIPGap', 0.3, 'MIPFocus', 1, 'Heuristics', 0.2);
 params.Solver.Two_Stage.Stage_2.Options = struct();
 params.Solver.Two_Stage.Stage_2.Options.gurobi = struct( ...
-    'TimeLimit', 1800, 'MIPGap', 0.005, 'MIPFocus', 3, ...
+    'TimeLimit', 900, 'MIPGap', 0.005, 'MIPFocus', 3, ...
     'Heuristics', 0.01, 'ConcurrentMIP', 2);
 
 %% 8. 写出JSON文件
@@ -278,9 +320,11 @@ fclose(fid);
 fprintf('已生成参数文件：%s\n', Output_File);
 
 %% 9. 清除本脚本生成的临时变量
-clear D D_Index Data_Directory K K_Index Selected_D Selected_K T ans fid ...
+clear Consider_Wind_Uncertainty D D_Index Data_Directory K K_Index Selected_D ...
+    Selected_K T ans fid ...
     Gen_Cost_Full_Load GFL_Rated_Node JSON_Text Load_Factor ...
     Output_File Parameter_Directory params Result RTS_GMLC_Result_File ...
     RTS_GMLC_Run_Directory Scenario_Probabilities Scenario_Row ...
     Typical_Days UC_Generator_Buses Wind_DA_Factor ...
-    Wind_Scenario_Factor Wind_Scenarios x_GFM_Res_Device mpc
+    Wind_Deterministic_Factor Wind_Scenario_Factor Wind_Scenarios ...
+    x_GFM_Res_Device mpc

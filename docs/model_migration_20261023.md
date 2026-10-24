@@ -10,7 +10,8 @@
 | --- | --- |
 | `code/functions/network/build_multiple_snapshot_network.m` | 复用 Kron 降阶与位置矩阵，式（1）—（3）；新版按线路投运状态构造网络，忽略电阻、并联电纳、变比和移相对安全网络的影响 |
 | `code/functions/network/prepare_converter_security_network.m` | 源电纳、同节点模块电纳求和、式（4）虚拟阻抗修正、故障移除连通分量、Appendix 有效电抗界 |
-| `code/functions/security/add_converter_security_constraints.m` | 式（18）—（20）并集/交集，式（21）—（23）并集残压及 SCC，式（24）—（26）交集电抗列及 SCR，式（29）、（30）源支撑 |
+| `code/functions/security/add_converter_security_constraints.m` | 式（18）—（20）并集/交集，式（21）—（23）并集残压及 SCC，式（24）—（26）交集电抗列及 SCR；支持逐时实际 UC 状态装配 |
+| `code/functions/security/add_converter_source_support_constraints.m` | 式（29）、（30）源支撑，独立于 SCC/SCR 限值开关，在规划约束中调用 |
 | `code/functions/security/add_lvrt_segment_constraints.m` | 式（9）的精确三段 LVRT MILP |
 | `code/functions/optimization/build_multiple_snapshot_planning_model.m` | 式（27）、（28）、（31）—（35）：目标函数、直接投建、逐场景运行及循环边界；构建模型而不调用求解器 |
 | `code/functions/optimization/solve_multiple_snapshot_planning.m` | 默认新版求解、诊断、热启动与后验复算；显式 legacy 参数路由到旧版 |
@@ -22,7 +23,7 @@
 | `code/functions/optimization/build_multiple_snapshot_security_constraint_assembly.m`、`solve_one_stage.m` | 新旧装配诊断及求解路由 |
 | `code/scripts/system/run_multiple_snapshot_planning.m`、`start_multiple_snapshot_planning_longrun.m`、`resolve_project_root_for_script.m` | 主脚本入口、后台入口和根目录定位；主脚本会重生成默认 JSON，并在求解后调用 `mailTome` |
 | `code/functions/utils/run_multiple_snapshot_sensitivity_scan.m` | 结果摘要兼容没有 `lambda_c` 的新结果 |
-| `code/functions/optimization/solve_multiple_snapshot_planning_legacy.m`、`solve_multiple_snapshot_planning_periodwise.m` | 完整旧版聚合模型及既有旧版逐时模型，要求显式 legacy 配置 |
+| `code/functions/optimization/solve_multiple_snapshot_planning_legacy.m`、`solve_multiple_snapshot_planning_periodwise.m` | 保留旧版聚合实现；逐时入口对新版配置调用公共新版模型，仅显式 legacy 配置进入旧逐时实现 |
 | `code/tests/build_converter_test_case.m`、`test_converter_security_model.m`、`test_converter_planning_solve.m` | 独立三节点测试数据及分层验证 |
 
 ## 数学实现与复用范围
@@ -35,13 +36,15 @@ SCR 只重构交集网络中 GFL 节点所需的电抗列。电抗下界为零�
 
 残压使用论文的 `[0,1]` 有效界；式（30）保证非故障连通分量有源，方程解因而为正。没有引入任意正电压下限。二进制与残压/电抗的乘积沿用 `add_binary_product_bounds` 的四条精确 McCormick 约束。三段 LVRT 使用分段选择二进制变量与有界分段电压，两个断点均准确包含。
 
-式（29）作用于日内交集网络，即使只启用 SCC 也保留。式（30）作用于每个故障移除分量的**每一个逐时 UC 状态**，不额外要求该分量在交集状态下有源。安全模型中没有充放电开关；已投建 GFM 在充电、放电和零有功状态下均提供源支撑。
+式（29）作用于日内交集网络，式（29）—（30）已移至规划约束，即使 SCC/SCR 限值均关闭也保留。式（30）作用于每个故障移除分量的**每一个逐时 UC 状态**，不额外要求该分量在交集状态下有源。安全模型中没有充放电开关；已投建 GFM 在充电、放电和零有功状态下均提供源支撑。
 
 原有无损 DC 潮流、标准循环 UC、逐场景爬坡、循环最小开停机时间、储能能量递推及期末闭合、场景概率权重和分段透视成本割得到复用。归一化出力等式改写为等价的乘法形式，以支持 `Pmax=Pmin`，避免除零。移除了旧版额外的 `弃风 >= 可用风电-额定容量` 约束，按式（32）仅使用可用功率作为运行上界；用户应提供物理有效的可用功率场景。新版不施加旧版顺序投建限制，避免不同额定功率/电抗/成本的模块被错误强制排序。
 
 模块投建维度为 `[候选节点,模块序号]`，跨全部典型日、场景和时段共享。UC、启停维度为 `[机组,典型日,时段]`；有功运行变量维度为 `[元件,典型日,风电场景,时段]`。安全残压维度为 `[保留节点,故障节点,典型日]`，SCR 电抗列维度为 `[保留节点,GFL节点,典型日]`。安全内部使用系统基准标幺值；运行功率为 MW、能量为 MWh、时长为小时；输出 SCC 乘 `Base_kA`，SCR 无量纲。
 
-## 验证结果
+## 初次迁移的验证记录
+
+本节为初次迁移时的记录；后续算例分析、当前可用入口及 T=3 新版 AG/PW 验证见项目 README。本次同步不新增或更新 MAT 输入。
 
 环境为 MATLAB R2024b、现有 YALMIP，以及原参数文件指定的 Gurobi 13.0 MATLAB 接口。没有修改求解器选择；测试只收紧测试专用时限和间隙。所有优化测试均实际求解，未以静态检查冒充求解成功。
 
@@ -96,7 +99,7 @@ run(fullfile(Project_Root,'code','scripts','system', ...
 
 清除 `Parameter_File` 后运行主脚本会使用默认参数源；这会覆盖默认 JSON。主脚本最后调用 `mailTome` 发送完成通知；若环境未配置该函数，通知步骤可能报错。后台入口 `start_multiple_snapshot_planning_longrun(Project_Root,Parameter_File)` 使用传入参数文件。结果沿用现有 MAT 输出和绘图流程；绘图时应使用生成该结果时的参数文件。
 
-JSON 顶层 `ModelVersion` 缺省为 `2026-10-23`。显式设为 `legacy` 时，加载器才建立旧目录，默认求解接口路由到保存的旧版实现。历史 `solve_multiple_snapshot_planning_periodwise` 仅接受 legacy 配置；不能把该旧版逐时模型和新版聚合模型当作等价性能对照。新模型结果没有 `lambda_c`，`Z_SCC` 为空；`Z_SCR` 保留物理标幺复数外壳供已有结果接口使用，真正决策变量只有实电抗。
+JSON 顶层 `ModelVersion` 缺省为 `2026-10-23`。显式设为 `legacy` 时，加载器才建立旧目录，默认求解接口路由到保存的旧版实现。新版 `solve_multiple_snapshot_planning_periodwise` 设置 `SecurityFormulation='periodwise'`，调用与聚合模型相同的新版构建和求解流程；旧逐时实现仅用于显式 legacy 配置，不能将不同版本混作性能对照。新模型结果没有 `lambda_c`，`Z_SCC` 为空；`Z_SCR` 保留物理标幺复数外壳供已有结果接口使用，真正决策变量只有实电抗。
 
 ## 需确认的算例输入
 

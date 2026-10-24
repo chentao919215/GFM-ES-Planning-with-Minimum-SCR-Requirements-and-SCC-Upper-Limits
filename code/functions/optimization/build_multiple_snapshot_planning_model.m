@@ -11,6 +11,7 @@ u_GFL = CONF.u_GFL(:);
 D     = CONF.TypicalDayCount;
 K     = CONF.WindScenarioCount;
 T     = CONF.PeriodCount;
+Is_Periodwise = strcmp(CONF.SecurityFormulation,'periodwise');
 
 %% 2. 构造网络数据
 % 静态网络矩阵和逐时负荷、GFL-WG可用出力统一由network模块与CONF提供。
@@ -116,7 +117,7 @@ P_Line     = sdpvar(L,D,K,T,'full');
 Cost_SG = sdpvar(G,D,K,T,'full');
 
 %% 4. 建立约束
-%% 4.1 规划约束(Manuscript Section III-A，式(28))
+%% 4.1 规划约束(Manuscript Section III-A，式(28)-(30))
 % 新版式(28)：直接限制跨典型日、场景及运行时段共享的模块投建变量。
 C_Plan = [];
 C_Plan = [C_Plan, u_GFM_Module(~Active_Module_Mask) == 0];
@@ -129,6 +130,25 @@ E_GFM_Installed = GFM_Candidate_Module_Mat* ...
 N_GFM_Installed = GFM_Candidate_Module_Mat*u_GFM_Module_Table;
 P_GFM_Candidate_Upper = GFM_Candidate_Module_Mat*GFM_Module_PN;
 E_GFM_Initial = GFM_SOC_Initial.*E_GFM_Installed;
+
+% 新版式(29)-(30)：源支撑是规划可行性条件，不随SCC/SCR限值开关关闭。
+Security_Network = prepare_converter_security_network(NET,CONF);
+if Is_Periodwise
+    % 逐时对照：式(29)逐时采用实际UC，式(30)仍逐故障连通分量有源。
+    Snapshot_CONF = CONF;
+    Snapshot_CONF.PeriodCount = 1;
+    C_Source_Support = [];
+    for t = 1:T
+        C_Source_Support = [C_Source_Support, ...
+            add_converter_source_support_constraints( ...
+            Security_Network,Snapshot_CONF,u_SG(:,:,t), ...
+            u_SG(:,:,t),u_GFM_Module_Table)]; %#ok<AGROW>
+    end
+else
+    C_Source_Support = add_converter_source_support_constraints( ...
+        Security_Network,CONF,u_SG,u_SG_SCR,u_GFM_Module_Table);
+end
+C_Plan = [C_Plan,C_Source_Support];
 
 %% 4.2 基础潮流约束(Manuscript Section III-B，式(31)-(32))
 C_Power_Flow = [];
@@ -279,10 +299,30 @@ for d = 1:D
     end
 end
 
-%% 4.4 安全约束(新版Section II，式(18)-(26)及III-A，式(29)-(30))
+%% 4.4 安全约束(新版Section II，式(18)-(26))
 % 并集残余电压直接给出SCC上界；交集仅重构GFL-WG节点电抗列。
-[C_Security, Security] = add_converter_security_constraints( ...
-    NET,CONF,u_SG,u_SG_SCC,u_SG_SCR,u_GFM_Module_Table);
+if Is_Periodwise
+    % 新版逐时对照：仅将安全状态改为实际UC，运行模型和物理方程共用。
+    % 日内并/交集保留为结果诊断，不对逐时模型施加聚合安全限值。
+    Logic_CONF = CONF;
+    Logic_CONF.Enable_SCC = false;
+    Logic_CONF.Enable_SCR = false;
+    [C_Security, Security] = add_converter_security_constraints( ...
+        NET,Logic_CONF,u_SG,u_SG_SCC,u_SG_SCR, ...
+        u_GFM_Module_Table,Security_Network);
+    Security.Periodwise = cell(T,1);
+    for t = 1:T
+        [C_Hourly, Hourly_Security] = add_converter_security_constraints( ...
+            NET,Snapshot_CONF,u_SG(:,:,t),u_SG(:,:,t),u_SG(:,:,t), ...
+            u_GFM_Module_Table,Security_Network);
+        C_Security = [C_Security,C_Hourly]; %#ok<AGROW>
+        Security.Periodwise{t} = Hourly_Security;
+        Security.Segment = [Security.Segment;Hourly_Security.Segment]; %#ok<AGROW>
+    end
+else
+    [C_Security, Security] = add_converter_security_constraints( ...
+        NET,CONF,u_SG,u_SG_SCC,u_SG_SCR,u_GFM_Module_Table,Security_Network);
+end
 
 %% 5. 构造目标函数(Manuscript Section III-A，式(27))
 % 同步机单位时间运行成本采用归一化出力上的分段透视割近似。

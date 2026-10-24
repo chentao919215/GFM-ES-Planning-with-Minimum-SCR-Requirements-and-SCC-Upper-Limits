@@ -1,9 +1,11 @@
 function [C, Security] = add_converter_security_constraints( ...
-    NET, CONF, u_SG, u_Union, u_Intersection, u_Module)
-%% 新版式(18)-(26)、(29)-(30)：直接决策的聚合SCC/SCR安全约束。
+    NET, CONF, u_SG, u_Union, u_Intersection, u_Module, SEC)
+%% 新版式(18)-(26)：直接决策的聚合SCC/SCR安全约束。
 % SCC残压索引为[非故障/故障节点,故障节点,典型日]；不含场景维度。
 
-SEC = prepare_converter_security_network(NET,CONF);
+if nargin < 7
+    SEC = prepare_converter_security_network(NET,CONF);
+end
 N = SEC.N;
 D = CONF.TypicalDayCount;
 T = CONF.PeriodCount;
@@ -11,6 +13,9 @@ G = NET.G;
 M = CONF.GFM_Module_Count;
 Q = G+M;
 C = [];
+% 单时段逐时对照直接传入同一UC变量，无需再装配恒真的并/交集关系。
+Is_Actual_Snapshot = T == 1 && isequal(u_Union,u_SG) && ...
+    isequal(u_Intersection,u_SG);
 Security = struct('Network',SEC,'Voltage',[],'SCC',[], ...
     'X_SCR',[],'Segment',[]);
 if CONF.Enable_SCC
@@ -21,32 +26,24 @@ if CONF.Enable_SCR
     Security.X_SCR = sdpvar(N,numel(SEC.GFL),D,'full');
 end
 for d = 1:D
-    U_Sum = sum(reshape(u_SG(:,d,:),G,T),2);
-    for t = 1:T
-        % 式(18)-(20)：精确并集和交集逻辑。
-        C = [C, u_Union(:,d) >= u_SG(:,d,t), ...
-            u_Intersection(:,d) <= u_SG(:,d,t)]; %#ok<AGROW>
+    if ~Is_Actual_Snapshot
+        U_Sum = sum(reshape(u_SG(:,d,:),G,T),2);
+        for t = 1:T
+            % 式(18)-(20)：精确并集和交集逻辑。
+            C = [C, u_Union(:,d) >= u_SG(:,d,t), ...
+                u_Intersection(:,d) <= u_SG(:,d,t)]; %#ok<AGROW>
+        end
+        C = [C, u_Union(:,d) <= U_Sum, ...
+            u_Intersection(:,d) >= U_Sum-(T-1)]; %#ok<AGROW>
     end
-    C = [C, u_Union(:,d) <= U_Sum, ...
-        u_Intersection(:,d) >= U_Sum-(T-1)]; %#ok<AGROW>
     if ~(CONF.Enable_SCC || CONF.Enable_SCR)
         continue;
     end
-    % 式(29)独立于运行充放电状态；交集网络必须有源支撑。
-    C = [C, sum(u_Intersection(:,d))+sum(u_Module) >= 1]; %#ok<AGROW>
     if CONF.Enable_SCC
         Union_Sources = [u_Union(:,d);u_Module];
         Source = SEC.Source_Location*(SEC.Source_b.*Union_Sources);
         for n = 1:N
             J = setdiff((1:N).',n);
-            % 式(30)作用于每一逐时UC状态，而不是交集或并集状态。
-            for c = 1:numel(SEC.Fault_Components{n})
-                Nodes = SEC.Fault_Components{n}{c};
-                Source_Mask = full(sum(SEC.Source_Location(Nodes,:),1)).';
-                for t = 1:T
-                    C = [C, Source_Mask.'*[u_SG(:,d,t);u_Module] >= 1]; %#ok<AGROW>
-                end
-            end
             V = Security.Voltage(:,n,d);
             C = [C, 0 <= V, V <= 1, V(n) == 0]; %#ok<AGROW>
             % 式(21)：只需源所在节点的二进制-残压乘积。

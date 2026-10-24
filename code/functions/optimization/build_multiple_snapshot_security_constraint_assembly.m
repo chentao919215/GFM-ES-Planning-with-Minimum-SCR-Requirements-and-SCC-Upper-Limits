@@ -27,8 +27,17 @@ if strcmp(CONF.ModelVersion,'2026-10-23')
     Assembly.Invalid_SCC_State_Pairs = false;
     Assembly.Invalid_Intersection_States = false;
     Assembly.Union_Residual_Voltage = Enable_SCC;
-    Assembly.Intersection_Source_Support = Enable_SCC || Enable_SCR;
-    Assembly.Hourly_Postfault_Component_Support = Enable_SCC;
+    Assembly.Intersection_Source_Support = true;
+    Assembly.Hourly_Postfault_Component_Support = true;
+    if strcmp(CONF.SecurityFormulation,'periodwise')
+        Assembly.Aggregate_SCC_Union = false;
+        Assembly.Aggregate_Intersection = false;
+        Assembly.Union_Residual_Voltage = false;
+        Assembly.Intersection_Source_Support = false;
+        Assembly.Hourly_Source_Support = true;
+        Assembly.Periodwise_Residual_Voltage = Enable_SCC;
+        Assembly.Periodwise_Impedance_SCR = Enable_SCR;
+    end
 end
 
 end

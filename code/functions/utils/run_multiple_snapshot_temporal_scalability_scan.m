@@ -1,6 +1,7 @@
 function [Summary_Table, Summary_File] = ...
-    run_multiple_snapshot_temporal_scalability_scan(Project_Root, Period_Counts)
-%% 按IV-D两阶段流程比较聚合与逐时安全表示的时间尺度性能。
+    run_multiple_snapshot_temporal_scalability_scan( ...
+    Project_Root, Period_Counts, Wind_Source_File)
+%% 按IV-C两阶段流程比较聚合与逐时安全表示的时间尺度性能。
 % 每个T仅构造和加载一份输入；运行本函数才会启动两种模型求解。
 
 validateattributes(Period_Counts, {'numeric'}, ...
@@ -12,16 +13,20 @@ if any(mod(24, Period_Counts) ~= 0) || ...
         'Period counts must be unique integer divisors of 24.');
 end
 
-% 与IV-C一致，先由现有参数源刷新Case-4基准JSON；派生输入不写回该文件。
-run(fullfile(Project_Root, 'data', 'params', ...
-    'generate_multiple_snapshot_default_params.m'));
-Baseline_Parameter_File = fullfile(Project_Root, 'data', 'params', ...
+% 实验使用新版、双安全约束和原始四场景，不改写项目默认参数文件。
+if nargin < 3
+    Wind_Source_File = fullfile(Project_Root, 'data', 'RTS-GMLC', ...
+        'processed', 'rts_gmlc_v0.2.3_fixed_extreme_medoids', ...
+        'run_20260822_162606', ...
+        'rts_gmlc_typical_days_and_wind_scenarios_20260822_162606.mat');
+end
+Source_Parameter_File = fullfile(Project_Root, 'data', 'params', ...
     'multiple_snapshot_default_params.json');
-Baseline_Params = jsondecode(fileread(Baseline_Parameter_File));
+Baseline_Params = build_temporal_baseline(Source_Parameter_File, Wind_Source_File);
 validate_temporal_baseline(Baseline_Params);
 if ~isfield(Baseline_Params.solver.options, 'gurobi')
     error('TemporalScalability:MissingGurobiOptions', ...
-        'The Case-4 parameters do not define Gurobi options.');
+        'The temporal baseline parameters do not define Gurobi options.');
 end
 
 Run_Stamp = char(datetime('now', 'Format', 'yyyyMMdd_HHmmss'));
@@ -32,6 +37,8 @@ if isfolder(Run_Directory)
         'The timestamped output directory already exists: %s', Run_Directory);
 end
 ensure_directory(Run_Directory);
+Baseline_Parameter_File = fullfile(Run_Directory, 'baseline_parameters.json');
+write_temporal_parameters(Baseline_Parameter_File, Baseline_Params);
 Summary_File = fullfile(Run_Directory, ...
     ['temporal_scalability_summary_', Run_Stamp, '.mat']);
 Summary_CSV_File = fullfile(Run_Directory, ...
@@ -61,6 +68,8 @@ for i = 1:numel(Period_Counts)
         [mpc, CONF, paths] = load_multiple_snapshot_case( ...
             Project_Root, Parameter_File);
         validate_temporal_input(CONF, Params, Baseline_Params, T);
+        % 同一T共用日志路径；记录实际求解进度且避免依赖当前工作目录。
+        CONF.solver.options.gurobi.LogFile = fullfile(T_Directory,'gurobi.log');
     catch ME
         % 单个T的输入失败时，分别记录AG/PW两点并继续后续T。
         for j = 1:numel(Formulations)
@@ -85,6 +94,8 @@ for i = 1:numel(Period_Counts)
     for j = 1:numel(Formulations)
         Index = 2*(i-1) + j;
         Formulation = Formulations(j);
+        fprintf('\nTemporal T=%d (%g h per period), %s\n', ...
+            T, Period_Duration_Hours, Formulation);
         Formulation_Tic = tic;
         Current_Stage = "setup";
         Row = initialize_temporal_row(T, Period_Duration_Hours, ...
@@ -99,28 +110,18 @@ for i = 1:numel(Period_Counts)
             ensure_directory(Stage_1_Directory);
             ensure_directory(Stage_2_Directory);
 
-            % PW仅延长两个阶段的TimeLimit；其他原生求解器选项沿用AG。
+            % AG/PW采用完全相同的两阶段求解配置，包括原生TimeLimit。
             CONF_Formulation = CONF;
-            if Formulation == "periodwise"
-                CONF_Formulation = scale_periodwise_time_limits( ...
-                    CONF_Formulation, 5);
-                validate_solver_pair(CONF, CONF_Formulation);
-            end
+            validate_solver_pair(CONF, CONF_Formulation);
             Row.Stage_1_TimeLimit_s = active_stage_time_limit( ...
                 CONF_Formulation, 'Stage_1');
             Row.Stage_2_TimeLimit_s = active_stage_time_limit( ...
                 CONF_Formulation, 'Stage_2');
-            if Formulation == "periodwise"
-                if Row.Stage_1_TimeLimit_s ~= 5*active_stage_time_limit( ...
-                        CONF, 'Stage_1') || ...
-                        Row.Stage_2_TimeLimit_s ~= 5*active_stage_time_limit( ...
-                        CONF, 'Stage_2')
-                    error('TemporalScalability:TimeLimitMismatch', ...
-                        'PW native stage TimeLimits must be five times AG.');
-                end
-            end
 
             Current_Stage = "stage_1";
+            fprintf('Stage 1 TimeLimit=%g s; target gap=%g\n', ...
+                Row.Stage_1_TimeLimit_s, ...
+                CONF_Formulation.Solver.Two_Stage.Stage_1.MIP_Gap);
             CONF_Stage_1 = apply_multiple_snapshot_solver_stage( ...
                 CONF_Formulation, ...
                 CONF_Formulation.Solver.Two_Stage.Stage_1);
@@ -147,6 +148,9 @@ for i = 1:numel(Period_Counts)
             if ~(Result_Stage_1.Diagnostics.mip_gap <= ...
                     CONF_Formulation.Solver.Two_Stage.Stage_2.MIP_Gap)
                 Current_Stage = "stage_2";
+                fprintf('Stage 2 TimeLimit=%g s; target gap=%g\n', ...
+                    Row.Stage_2_TimeLimit_s, ...
+                    CONF_Formulation.Solver.Two_Stage.Stage_2.MIP_Gap);
                 CONF_Stage_2 = apply_multiple_snapshot_solver_stage( ...
                     CONF_Formulation, ...
                     CONF_Formulation.Solver.Two_Stage.Stage_2);
@@ -175,6 +179,10 @@ for i = 1:numel(Period_Counts)
                     Result_File_Stage_2, "stage_2");
             end
 
+            if ~Row.Security_Validation_Passed
+                error('TemporalScalability:SecurityValidationFailed', ...
+                    'The final incumbent failed the independent security checks.');
+            end
             if Row.Final_MIP_Gap <= Row.Target_MIP_Gap
                 Row.Status = "target_met";
             else
@@ -224,31 +232,88 @@ writetable(Summary_Table, Summary_CSV_File);
 end
 
 function validate_temporal_baseline(Params)
-%% 锁定Case-4的安全限值、时间基准、场景数及模块布置。
+%% 核对新版随机实验基准，物理参数与成本沿用当前参数源。
 Time = Params.Multiple_Snapshot.Time;
 Wind = Params.Multiple_Snapshot.Wind_Scenarios;
-if ~Params.Security.Enable_SCC || ~Params.Security.Enable_SCR || ...
+if ~strcmp(Params.ModelVersion,'2026-10-23') || ...
+        ~Params.Security.Enable_SCC || ~Params.Security.Enable_SCR || ...
+        Params.Security.Consider_Wind_Uncertainty ~= 1 || ...
         ~isfinite(Params.Security.I_limit_kA) || ...
         Params.Security.I_limit_kA <= 0 || ...
-        abs(Params.Security.SCR_min-2.8) > 1e-12 || ...
+        ~isfinite(Params.Security.SCR_min) || Params.Security.SCR_min <= 0 || ...
         ~Params.Solver.Two_Stage.Enabled || ...
-        abs(Params.Solver.Two_Stage.Stage_2.MIP_Gap-0.005) > 1e-12 || ...
         Time.Typical_Day_Count ~= 4 || Time.Period_Count ~= 24 || ...
         Wind.Count ~= 4 || ...
         ~strcmpi(char(Wind.Generation_Mode), 'explicit') || ...
-        ~isequal(Time.Period_Durations_Hours(:), ones(24,1)) || ...
-        ~isequal(Params.GFM_Modules.Candidates.Bus(:).', [6 10 16]) || ...
-        ~isequal(Params.GFM_Modules.Module.Bus(:).', [6 6 10 10 16 16])
+        ~isequal(Time.Period_Durations_Hours(:), ones(24,1))
     error('TemporalScalability:UnexpectedBaseline', ...
-        'The generated parameters no longer match the 24-hour Case-4 baseline.');
+        'The temporal experiment requires the new 24-hour, four-scenario security baseline.');
 end
+end
+
+function Params = build_temporal_baseline(Parameter_File, Wind_Source_File)
+%% 从原始RTS-GMLC结果恢复四场景，避免从确定性平均轨迹反推场景。
+if ~isfile(Parameter_File) || ~isfile(Wind_Source_File)
+    error('TemporalScalability:MissingBaselineInput', ...
+        'Both the generated parameter JSON and the original wind MAT file are required.');
+end
+Params = jsondecode(fileread(Parameter_File));
+Loaded = load(Wind_Source_File, 'Result');
+Data = Loaded.Result;
+D = Params.Multiple_Snapshot.Time.Typical_Day_Count;
+T = Params.Multiple_Snapshot.Time.Period_Count;
+K = 4;
+D_Index = find([Data.Typical_Day_Sets.D] == D, 1);
+if isempty(D_Index)
+    error('TemporalScalability:MissingTypicalDays', ...
+        'The original wind source has no D=%d typical-day set.', D);
+end
+Typical_Days = Data.Typical_Day_Sets(D_Index);
+Scenario_Row = Data.Wind_Scenario_Sets(D_Index,:);
+K_Index = find([Scenario_Row.K] == K, 1);
+if isempty(K_Index) || ~Scenario_Row(K_Index).Available
+    error('TemporalScalability:MissingWindScenarios', ...
+        'The original source does not provide D=%d, K=%d wind scenarios.', D, K);
+end
+Wind = Scenario_Row(K_Index);
+Probability = Wind.Probability;
+Normalized = Wind.Wind_Scenario_Normalized;
+if ~isequal(size(Probability),[D K]) || ...
+        ~isequal(size(Normalized),[D K T]) || ...
+        any(~isfinite(Probability(:))) || any(Probability(:) <= 0) || ...
+        any(abs(sum(Probability,2)-1) > 1e-12) || ...
+        any(~isfinite(Normalized(:))) || any(Normalized(:) < 0) || ...
+        ~same_numeric_values(Typical_Days.Weight_Days(:), ...
+        Params.Multiple_Snapshot.Time.Typical_Day_Weights_Days(:)) || ...
+        ~same_numeric_values(Typical_Days.System_Load_Normalized(:), ...
+        Params.Multiple_Snapshot.Profiles.Load_Factor(:))
+    error('TemporalScalability:InvalidWindSource', ...
+        'Original scenario probabilities, profiles, or typical days do not match the baseline.');
+end
+N = size(Params.Network.mpc.bus,1);
+Buses = Params.GFL_WG.Built_Nodes(:);
+Ratings = Params.GFL_WG.PN_MW(:);
+if isscalar(Ratings), Ratings = repmat(Ratings,numel(Buses),1); end
+Rated_Node = accumarray(Buses,Ratings,[N 1]);
+Params.ModelVersion = '2026-10-23';
+Params.Security.Enable_SCC = true;
+Params.Security.Enable_SCR = true;
+Params.Security.Consider_Wind_Uncertainty = 1;
+Params.Multiple_Snapshot.Wind_Scenarios.Count = K;
+Params.Multiple_Snapshot.Wind_Scenarios.Generation_Mode = 'explicit';
+Params.Multiple_Snapshot.Wind_Scenarios.Names = ...
+    arrayfun(@(k) sprintf('scenario_%d',k),1:K,'UniformOutput',false);
+Params.Multiple_Snapshot.Wind_Scenarios.Probabilities = Probability;
+Params.Multiple_Snapshot.Wind_Scenarios.P_GFL_Available_Scenarios = ...
+    reshape(Rated_Node,N,1,1,1).*reshape(Normalized,1,D,K,T);
+Params.Temporal_Experiment = struct('Source_Parameter_File',Parameter_File, ...
+    'Wind_Source_File',Wind_Source_File);
 end
 
 function Params = build_temporal_parameters(Baseline_Params, T)
 %% 沿现有JSON参数链将24个1 h功率点按连续区间取均值。
 Params = Baseline_Params;
-% IV-D保留迁移前的聚合与逐时安全模型对照，两种模型均显式使用legacy。
-Params.ModelVersion = 'legacy';
+% AG/PW使用相同新版物理模型，仅安全状态的时间聚合方式不同。
 if T == 24
     return;
 end
@@ -350,11 +415,7 @@ if Time.Period_Count ~= T || Time.Typical_Day_Count ~= 4 || ...
     error('TemporalScalability:LoadedInputMismatch', ...
         'The loaded case differs from the shared temporal input.');
 end
-Params_For_Baseline_Check = Params;
-if isfield(Params_For_Baseline_Check, 'ModelVersion')
-    Params_For_Baseline_Check = rmfield(Params_For_Baseline_Check, 'ModelVersion');
-end
-if T == 24 && ~isequaln(Params_For_Baseline_Check, Baseline_Params)
+if T == 24 && ~isequaln(Params, Baseline_Params)
     error('TemporalScalability:Baseline24Mismatch', ...
         'T=24 must use the original baseline parameters unchanged.');
 end
@@ -369,63 +430,12 @@ if Same
 end
 end
 
-function CONF = scale_periodwise_time_limits(CONF, Multiplier)
-%% 同时更新阶段说明值与各后端原生TimeLimit，其他选项不改。
-Stage_Names = {'Stage_1', 'Stage_2'};
-for i = 1:numel(Stage_Names)
-    Stage_Name = Stage_Names{i};
-    Stage = CONF.Solver.Two_Stage.(Stage_Name);
-    Stage.Time_Limit = Multiplier*Stage.Time_Limit;
-    Backends = fieldnames(Stage.Options);
-    for j = 1:numel(Backends)
-        Backend = Backends{j};
-        if ~isfield(Stage.Options.(Backend), 'TimeLimit')
-            error('TemporalScalability:MissingNativeTimeLimit', ...
-                'Stage %s has no native TimeLimit for %s.', ...
-                Stage_Name, Backend);
-        end
-        Stage.Options.(Backend).TimeLimit = Multiplier* ...
-            Stage.Options.(Backend).TimeLimit;
-    end
-    CONF.Solver.Two_Stage.(Stage_Name) = Stage;
-end
-end
-
 function validate_solver_pair(AG_CONF, PW_CONF)
-%% 运行时确保两个模型的求解配置只在阶段TimeLimit上不同。
-if ~isequaln(AG_CONF.solver, PW_CONF.solver)
+%% 运行时确保两个模型的基础选项及两阶段选项完全一致。
+if ~isequaln(AG_CONF.solver, PW_CONF.solver) || ...
+        ~isequaln(AG_CONF.Solver, PW_CONF.Solver)
     error('TemporalScalability:SolverSettingsMismatch', ...
-        'AG and PW base solver options differ.');
-end
-AG_Two_Stage = AG_CONF.Solver.Two_Stage;
-PW_Two_Stage = PW_CONF.Solver.Two_Stage;
-Stage_Names = {'Stage_1', 'Stage_2'};
-for i = 1:numel(Stage_Names)
-    Stage_Name = Stage_Names{i};
-    AG_Stage = AG_Two_Stage.(Stage_Name);
-    PW_Stage = PW_Two_Stage.(Stage_Name);
-    if PW_Stage.Time_Limit ~= 5*AG_Stage.Time_Limit
-        error('TemporalScalability:TimeLimitMismatch', ...
-            'PW %s metadata Time_Limit is not five times AG.', Stage_Name);
-    end
-    PW_Stage.Time_Limit = AG_Stage.Time_Limit;
-    Backends = fieldnames(AG_Stage.Options);
-    for j = 1:numel(Backends)
-        Backend = Backends{j};
-        if PW_Stage.Options.(Backend).TimeLimit ~= ...
-                5*AG_Stage.Options.(Backend).TimeLimit
-            error('TemporalScalability:TimeLimitMismatch', ...
-                'PW %s %s TimeLimit is not five times AG.', ...
-                Stage_Name, Backend);
-        end
-        PW_Stage.Options.(Backend).TimeLimit = ...
-            AG_Stage.Options.(Backend).TimeLimit;
-    end
-    PW_Two_Stage.(Stage_Name) = PW_Stage;
-end
-if ~isequaln(AG_Two_Stage, PW_Two_Stage)
-    error('TemporalScalability:SolverSettingsMismatch', ...
-        'AG and PW stage options differ beyond TimeLimit.');
+        'AG and PW solver settings must be identical.');
 end
 end
 
@@ -446,6 +456,7 @@ function [Result, Result_File] = ...
     solve_temporal_stage(mpc, CONF, paths, Formulation)
 %% 保持IV-C结果接口，仅按formulation选择已有AG或新PW求解函数。
 CONF = normalize_multiple_snapshot_conf(CONF);
+CONF.SecurityFormulation = char(Formulation);
 switch Formulation
     case "aggregated"
         Solver = @solve_multiple_snapshot_planning;
@@ -550,15 +561,14 @@ function Row = initialize_temporal_row( ...
     T, Period_Duration_Hours, Formulation, T_Directory, ...
     Parameter_File, Input_File, Baseline_Params)
 Row = empty_temporal_summary();
+Row.ModelVersion = string(Baseline_Params.ModelVersion);
+Row.WindScenarioCount = Baseline_Params.Multiple_Snapshot.Wind_Scenarios.Count;
 Row.Period_Count = T;
 Row.Period_Duration_Hours = Period_Duration_Hours;
 Row.Formulation = Formulation;
 Row.Solver_Backend = "gurobi";
 Row.Target_MIP_Gap = Baseline_Params.Solver.Two_Stage.Stage_2.MIP_Gap;
 Row.TimeLimit_Multiplier = 1;
-if Formulation == "periodwise"
-    Row.TimeLimit_Multiplier = 5;
-end
 Row.T_Directory = string(T_Directory);
 Row.Parameter_File = string(Parameter_File);
 Row.Input_Data_File = string(Input_File);
@@ -567,6 +577,8 @@ end
 function Row = empty_temporal_summary()
 %% 标量字段支持每个(T,formulation)一行MAT/CSV结果。
 Row = struct();
+Row.ModelVersion = "";
+Row.WindScenarioCount = NaN;
 Row.Period_Count = NaN;
 Row.Period_Duration_Hours = NaN;
 Row.Formulation = "";

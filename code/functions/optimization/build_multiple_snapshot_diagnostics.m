@@ -23,11 +23,15 @@ Diagnostics.best_bound = NaN;
 Diagnostics.mip_gap = NaN;
 Diagnostics.node_count = NaN;
 Diagnostics.iteration_count = NaN;
+Diagnostics.solver_status = '';
 
 if isfield(sol, 'solveroutput') && isstruct(sol.solveroutput)
     Solver_Result = sol.solveroutput;
     if isfield(Solver_Result, 'result') && isstruct(Solver_Result.result)
         Solver_Result = Solver_Result.result;
+    end
+    if isfield(Solver_Result, 'status')
+        Diagnostics.solver_status = char(string(Solver_Result.status));
     end
 
     Diagnostics.objective = read_numeric_field(Solver_Result, 'objval', NaN);
