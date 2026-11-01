@@ -1,22 +1,47 @@
+function Report = plot_03_line_loading(Options)
 %% 分别生成线路负载热力图、线路负载排序图及对应表格。
-% 以下路径留空时，脚本自动使用最新结果、默认参数文件和默认输出目录。
-if ~exist('Result_File', 'var'), Result_File = ''; end
-if ~exist('Output_Directory', 'var'), Output_Directory = ''; end
-if ~exist('Parameter_File', 'var'), Parameter_File = ''; end
-if ~exist('Scenario_Index', 'var'), Scenario_Index = []; end
-[Data, Output_Directory] = load_figure_data(Result_File, Output_Directory, ...
-    Parameter_File, '03_line_loading', Scenario_Index);
+% 通过Options指定结果文件、输出目录和场景；默认读取最新主规划结果。
+if nargin < 1
+    Options = struct();
+end
 
-Max_Day_Loading = zeros(Data.L,Data.D);
+%% 1. 准备绘图输入与样式
+Script_Directory = fileparts(mfilename('fullpath'));
+addpath(fullfile(fileparts(fileparts(fileparts(Script_Directory))), 'functions', 'utils'));
+Project_Root = find_project_root(Script_Directory);
+addpath(genpath(fullfile(Project_Root, 'code', 'functions')));
+Options = figure_options(Options, struct('Result_File', '', 'Output_Directory', fullfile(Project_Root, ...
+    'figs', 'for_debug', '03_line_loading'), 'Scenario_Index', 1));
+Style = figure_style('review');
+Style.Visible = Options.Visible;
+Style.Close_After_Save = Options.Close_After_Save;
+Result_File = Options.Result_File;
+Output_Directory = Options.Output_Directory;
+Scenario_Index = Options.Scenario_Index;
+[Data, Output_Directory] = load_figure_data(Result_File, Output_Directory, ...
+    '03_line_loading', Scenario_Index);
+Data.Style = Style;
+
+% 线路负载率仅在本脚本计算。
+Data.Branch_From = Data.CONF.Branch_From;
+Data.Branch_To = Data.CONF.Branch_To;
+Line_Limit_MW = Data.CONF.Line_Limit_MW;
+assert(numel(Line_Limit_MW) == Data.L, ...
+    'LineLoading:DimensionMismatch', '线路限值数量与结果不一致。');
+Data.Line_Loading_Pct = abs(Data.Result.P_Line) ./ ...
+    reshape(Line_Limit_MW, Data.L, 1, 1) * 100;
+Data.Line_Loading_Pct(~isfinite(Data.Line_Loading_Pct)) = NaN;
+
+Max_Day_Loading = zeros(Data.L, Data.D);
 validation = table();
 for d = 1:Data.D
     day = sprintf('D%02d', d);
-    loading = squeeze(Data.Line_Loading_Pct(:,d,:));
-    Max_Day_Loading(:,d) = max(loading, [], 2, 'omitnan');
+    loading = squeeze(Data.Line_Loading_Pct(:, d, :));
+    Max_Day_Loading(:, d) = max(loading, [], 2, 'omitnan');
 
-    fig = new_figure([9.0 7.0]); ax = axes(fig);
-    draw_interval_heatmap(ax, Data.Time_Edges, loading, line_loading_map(128));
-    clim(ax, [0 max(100, ceil(max(loading(:),[],'omitnan')/10)*10)]);
+    fig = new_figure(2.54*[9.0 7.0], Data.Style); ax = axes(fig);
+    draw_interval_heatmap(ax, Data.Time_Edges, loading, Data.Style.Sequential_Map);
+    clim(ax, [0 max(100, ceil(max(loading(:), [], 'omitnan')/10)*10)]);
     cb = colorbar(ax); cb.Label.String = 'Line loading (%)';
     xlabel(ax, 'Hour'); ylabel(ax, 'Line index');
     title(ax, sprintf('%s line loading ratio', day));
@@ -43,8 +68,9 @@ nshow = min(15, Data.L);
 idx = order(1:nshow);
 labels = compose('L%02d: %d-%d', idx, Data.Branch_From(idx), Data.Branch_To(idx));
 
-fig = new_figure([8.2 6.0]); ax = axes(fig);
-Loading_Map = line_loading_map(128);
+%% 2. 绘制指标图件
+fig = new_figure(2.54*[8.2 6.0], Data.Style); ax = axes(fig);
+Loading_Map = Data.Style.Sequential_Map;
 colormap(ax, Loading_Map);
 clim(ax, [0 100]);
 style_sci_axes(ax); set(ax, 'YDir', 'reverse');
@@ -67,7 +93,7 @@ for k = 1:nshow
     % 超过100%的部分使用色带末端颜色，避免突破0--100%的颜色归一化。
     if value > 100
         rectangle(ax, 'Position', [100, k-Bar_Height/2, value-100, Bar_Height], ...
-            'FaceColor', Loading_Map(end,:), 'EdgeColor', 'none');
+            'FaceColor', Loading_Map(end, :), 'EdgeColor', 'none');
     end
 
     rectangle(ax, 'Position', [0, k-Bar_Height, value, Bar_Height*2], ...
@@ -93,18 +119,22 @@ save_figure_file(fig, fullfile(Output_Directory, 'maximum_line_loading_ranking.f
 
 Max_Table = table((1:Data.L).', Data.Branch_From, Data.Branch_To, ...
     Max_Loading, 'VariableNames', ...
-    {'Line','FromBus','ToBus','MaximumLoading_pct'});
+    {'Line', 'FromBus', 'ToBus', 'MaximumLoading_pct'});
 Max_Table = sortrows(Max_Table, 'MaximumLoading_pct', 'descend');
 
+%% 3. 返回统计与核验结果
 Report = struct('MaximumLineLoading', Max_Table, 'Validation', validation);
 
-disp('03_line_loading_已完成绘图');
+disp('Line-loading figures saved.');
+
+end
 
 function draw_interval_heatmap(ax, edges, values, map)
-[nrow,ncol] = size(values);
+%% 按实际时段边界绘制热图，避免非等长时段被等距显示。
+[nrow, ncol] = size(values);
 x = repmat(edges, nrow+1, 1);
 y = repmat((0.5:1:nrow+0.5).', 1, ncol+1);
-c = [values, values(:,end); values(end,:), values(end,end)];
+c = [values, values(:, end); values(end, :), values(end, end)];
 surface(ax, x, y, zeros(size(x)), c, 'FaceColor', 'flat', ...
     'EdgeColor', 'none');
 view(ax, 2); axis(ax, 'tight'); set(ax, 'YDir', 'reverse');
@@ -120,27 +150,27 @@ Boundary_y = [];
 
 for i = 1:nrow
     for j = 1:ncol
-        if ~mask(i,j)
+        if ~mask(i, j)
             continue;
         end
 
         % 上边界
-        if i == 1 || ~mask(i-1,j)
+        if i == 1 || ~mask(i-1, j)
             Boundary_x = [Boundary_x, X_Edges(j), X_Edges(j+1), NaN]; %#ok<AGROW>
             Boundary_y = [Boundary_y, Y_Edges(i), Y_Edges(i), NaN]; %#ok<AGROW>
         end
         % 下边界
-        if i == nrow || ~mask(i+1,j)
+        if i == nrow || ~mask(i+1, j)
             Boundary_x = [Boundary_x, X_Edges(j), X_Edges(j+1), NaN]; %#ok<AGROW>
             Boundary_y = [Boundary_y, Y_Edges(i+1), Y_Edges(i+1), NaN]; %#ok<AGROW>
         end
         % 左边界
-        if j == 1 || ~mask(i,j-1)
+        if j == 1 || ~mask(i, j-1)
             Boundary_x = [Boundary_x, X_Edges(j), X_Edges(j), NaN]; %#ok<AGROW>
             Boundary_y = [Boundary_y, Y_Edges(i), Y_Edges(i+1), NaN]; %#ok<AGROW>
         end
         % 右边界
-        if j == ncol || ~mask(i,j+1)
+        if j == ncol || ~mask(i, j+1)
             Boundary_x = [Boundary_x, X_Edges(j+1), X_Edges(j+1), NaN]; %#ok<AGROW>
             Boundary_y = [Boundary_y, Y_Edges(i), Y_Edges(i+1), NaN]; %#ok<AGROW>
         end
@@ -148,60 +178,9 @@ for i = 1:nrow
 end
 end
 
-function map = line_loading_map(n)
-% 使用蓝色—浅紫—粉色—红色的连续渐变配色。
-anchors = [40 67 125; 70 117 176; 104 146 197; 166 186 223; ...
-    231 228 248; 244 220 237; 241 204 222; 234 183 202; ...
-    210 121 140; 179 69 87] / 255;
-x = linspace(0,1,size(anchors,1));
-xi = linspace(0,1,n);
-map = [interp1(x,anchors(:,1),xi).', interp1(x,anchors(:,2),xi).', ...
-    interp1(x,anchors(:,3),xi).'];
-end
-
-function save_figure_file(fig, File_Path)
-set(fig, 'Color', 'w', 'InvertHardcopy', 'off');
-drawnow;
-set(fig, 'Visible', 'on');
-Png_Path = strrep(File_Path, '.fig', '.png');
-Output_Directory = fileparts(File_Path);
-Temp_Fig_Path = [tempname(Output_Directory) '.fig'];
-Temp_Png_Path = [tempname(Output_Directory) '.png'];
-Cleanup_Temp_Files = onCleanup(@() delete_temp_files( ...
-    {Temp_Fig_Path, Temp_Png_Path})); %#ok<NASGU>
-
-% 先写临时文件，再替换目标文件，避免旧FIG文件状态影响savefig。
-savefig(fig, Temp_Fig_Path);
-exportgraphics(fig, Temp_Png_Path, 'Resolution', 600, ...
-    'BackgroundColor', 'white');
-replace_file(Temp_Fig_Path, File_Path);
-replace_file(Temp_Png_Path, Png_Path);
-set(fig, 'Visible', 'off');
-close(fig);
-end
-
-function replace_file(Source_Path, Target_Path)
-[Success, Message] = movefile(Source_Path, Target_Path, 'f');
-if ~Success
-    error('无法替换图件文件%s：%s', Target_Path, Message);
-end
-end
-
-function delete_temp_files(File_Paths)
-for k = 1:numel(File_Paths)
-    if isfile(File_Paths{k})
-        delete(File_Paths{k});
-    end
-end
-end
-
-function fig = new_figure(Size_Inches)
-fig = figure('Visible', 'off', 'Color', 'w', 'Units', 'inches', ...
-    'Position', [1 1 Size_Inches]);
-end
-
 function row = validation_row(name, value, tolerance, unit, passed)
+%% 将一个检查量、容差和单位整理为摘要表的一行。
 row = table(string(name), value, abs(value), tolerance, string(unit), ...
     logical(passed), 'VariableNames', ...
-    {'Check','Value','AbsoluteValue','Tolerance','Unit','Passed'});
+    {'Check', 'Value', 'AbsoluteValue', 'Tolerance', 'Unit', 'Passed'});
 end

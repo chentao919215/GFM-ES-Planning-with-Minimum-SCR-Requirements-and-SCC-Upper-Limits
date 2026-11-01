@@ -1,9 +1,13 @@
 function style_sci_axes(ax)
-%% Apply the shared black-and-white-safe SCI axis style.
-set(ax, 'FontName', 'Times New Roman', 'FontSize', 10, ...
-    'LineWidth', 0.8, 'Box', 'on', 'Layer', 'top', ...
-    'TickDir', 'out', 'Color', 'w');
-grid(ax, 'on');
-ax.GridAlpha = 0.16;
-ax.MinorGridAlpha = 0.08;
+%% 设置共用坐标样式，图件专用的刻度和范围由调用方设置。
+fig = ancestor(ax, 'figure');
+Style = getappdata(fig, 'ProjectFigureStyle');
+if isempty(Style)
+    Style = figure_style('review');
+end
+set(ax, 'FontName', Style.Font_Name, 'FontSize', Style.Font_Size, ...
+    'LineWidth', Style.Axis_Width, 'Box', 'off', 'Layer', 'top', ...
+    'TickDir', 'out', 'Color', 'w', 'XGrid', 'off', 'YGrid', 'on', ...
+    'XMinorGrid', 'off', 'YMinorGrid', 'off', 'GridColor', Style.Colors.Grid, ...
+    'GridAlpha', Style.Grid_Alpha);
 end

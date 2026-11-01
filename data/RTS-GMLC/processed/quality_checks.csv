@@ -1,0 +1,20 @@
+Check,Observed,Expected,Passed
+load_hourly_continuity,"8784 raw hourly rows","strict 1 h",1
+wind_da_hourly_continuity,"8784 raw hourly rows","strict 1 h",1
+wind_rt_5min_continuity,"105408 five-minute rows","strict 5 min",1
+wind_da_rt_hourly_alignment,"8784 raw aligned hourly rows","exact timestamp equality before exclusion",1
+excluded_calendar_date,"2020-02-29, 24 hourly rows removed from each series","2020-02-29 removed consistently",1
+processed_hourly_alignment,"8760 load / 8760 DA wind / 8760 RT wind aligned hourly rows","load, DA wind and hourly RT wind exactly equal",1
+complete_natural_days,"365 days","365 days, each containing 24 h",1
+period_count,"24 h/day","24 h/day",1
+bus_count,"73 buses","> 0",1
+wind_site_count,"4 sites","> 0",1
+missing_values,"none","none",1
+physical_boundaries,"passed","wind in [0, PMax]",1
+processed_dimensions,"true","true",1
+typical_day_weight_sum,"true","true",1
+fixed_extreme_medoids,"true","true",1
+wind_scenario_availability,"true","true",1
+uniform_k_scenario_dimensions,"true","true",1
+scenario_probability_sum,"true","true",1
+scenario_physical_boundaries,"true","true",1

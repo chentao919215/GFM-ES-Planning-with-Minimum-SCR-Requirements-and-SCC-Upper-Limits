@@ -30,6 +30,5 @@ function tf = is_project_root(candidate)
 % 该函数判断候选目录是否为本项目根目录。
 
 tf = isfolder(fullfile(candidate, 'code', 'functions')) && ...
-     isfolder(fullfile(candidate, 'data', 'params')) && ...
-     isfile(fullfile(candidate, 'data', 'params', 'multiple_snapshot_default_params.json'));
+    isfolder(fullfile(candidate, 'simulink', 'models'));
 end

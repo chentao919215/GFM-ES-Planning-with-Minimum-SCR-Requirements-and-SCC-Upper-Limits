@@ -1,67 +1,33 @@
-%% 按风电场景和典型日批量生成调试图件。
-% 输出目录结构：figs/for_debug/<scenario>/<figure category>/。
-% plot_04_security 另外按典型日拆分到对应场景目录下。
-
+function Report = run_all_scenarios_for_debug(Options)
+%% 固定一个规划结果文件，按场景和典型日批量生成检查图。
+if nargin < 1
+    Options = struct();
+end
 Script_Directory = fileparts(mfilename('fullpath'));
-Project_Root = find_project_root_local(Script_Directory);
-Debug_Root = fullfile(Project_Root, 'figs', 'for_debug');
+addpath(fullfile(fileparts(fileparts(fileparts(Script_Directory))), 'functions', 'utils'));
+Project_Root = find_project_root(Script_Directory);
 addpath(genpath(fullfile(Project_Root, 'code', 'functions')));
-File_Generation_Cleanup = configure_simulink_file_generation(Project_Root);
-
-% 先读取结果元数据，确定场景数量和名称。
-[meta, ~] = load_figure_data('', Debug_Root, '', 'for_debug', 1);
-Scenario_Count = meta.K;
-Scenario_Names = meta.Scenario_Names;
-
-for Scenario_Index = 1:Scenario_Count
-    Scenario_Name = char(Scenario_Names{Scenario_Index});
-    Scenario_Root = fullfile(Debug_Root, Scenario_Name);
-
-    Result_File = '';
-    Parameter_File = '';
-    Typical_Day_Index = [];
-    Output_Directory = fullfile(Scenario_Root, '01_planning');
-    run(fullfile(Script_Directory, 'plot_01_planning.m'));
-
-    Result_File = '';
-    Parameter_File = '';
-    Typical_Day_Index = [];
-    Output_Directory = fullfile(Scenario_Root, '02_operation');
-    run(fullfile(Script_Directory, 'plot_02_operation.m'));
-
-    Result_File = '';
-    Parameter_File = '';
-    Typical_Day_Index = [];
-    Output_Directory = fullfile(Scenario_Root, '03_line_loading');
-    run(fullfile(Script_Directory, 'plot_03_line_loading.m'));
-
-    for Typical_Day_Index = 1:meta.D
-        Result_File = '';
-        Parameter_File = '';
-        Output_Directory = fullfile(Scenario_Root, '04_security', ...
-            sprintf('D%02d', Typical_Day_Index));
-        run(fullfile(Script_Directory, 'plot_04_security.m'));
-        fprintf('04_security_已完成绘图：typical_day_index = %d\n', ...
-            Typical_Day_Index);
+Options = figure_options(Options, struct('Result_File', '', ...
+    'Output_Directory', fullfile(Project_Root, 'figs', 'for_debug')));
+[Meta, ~, Result_File] = load_figure_data(Options.Result_File, ...
+    Options.Output_Directory, 'for_debug', 1);
+Entries = {};
+for Scenario_Index = 1:Meta.K
+    Directory = fullfile(Options.Output_Directory, sprintf('scenario_%d', Scenario_Index));
+    Point = struct('Result_File', Result_File, 'Scenario_Index', Scenario_Index, ...
+        'Visible', Options.Visible, 'Close_After_Save', Options.Close_After_Save);
+    Point.Output_Directory = fullfile(Directory, '01_planning');
+    Entries{end+1} = plot_01_planning(Point); %#ok<AGROW>
+    Point.Output_Directory = fullfile(Directory, '02_operation');
+    Entries{end+1} = plot_02_operation(Point); %#ok<AGROW>
+    Point.Output_Directory = fullfile(Directory, '03_line_loading');
+    Entries{end+1} = plot_03_line_loading(Point); %#ok<AGROW>
+    for Day = 1:Meta.D
+        Point.Typical_Day_Index = Day;
+        Point.Output_Directory = fullfile(Directory, '04_security', sprintf('D%02d', Day));
+        Entries{end+1} = plot_04_security(Point); %#ok<AGROW>
     end
 end
-
-disp('已完成所有典型日和风电场景的调试图件生成。');
-
-function Project_Root = find_project_root_local(Start_Directory)
-% 从当前脚本目录向上查找同时包含code和simulink/models的项目根目录。
-candidate = char(java.io.File(Start_Directory).getCanonicalPath());
-while true
-    if isfolder(fullfile(candidate, 'code')) && ...
-        isfolder(fullfile(candidate, 'simulink', 'models'))
-        Project_Root = candidate;
-        return;
-    end
-    parent = fileparts(candidate);
-    if strcmp(parent, candidate)
-        break;
-    end
-    candidate = parent;
-end
-error('无法从目录%s找到项目根目录。', Start_Directory);
+Report = struct('Result_File', Result_File, 'Entries', {Entries});
+fprintf('Debug figures saved to %s\n', Options.Output_Directory);
 end

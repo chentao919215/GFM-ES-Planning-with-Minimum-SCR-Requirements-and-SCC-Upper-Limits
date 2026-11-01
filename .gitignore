@@ -3,25 +3,34 @@ logs/
 *.log
 *.sock
 
-# MATLAB/Gurobi generated outputs
+# MATLAB/Gurobi generated outputs, including module-local results/
 results/
 *.mat
 *.asv
 
+# Frozen paper input; regenerated data and figures remain local outputs
+!/data/RTS-GMLC/processed/rts_gmlc_profiles.mat
+/figs/rts_gmlc/
+
 # Simulink generated caches
 slprj/
 *.slxc
+*.slx.autosave
 simulink/artifacts/
 
-# Local reference papers and exported document drafts
-docs/**/*.pdf
-docs/**/*.doc
-docs/**/*.docx
+# Local documentation, imported results, and workspace metadata
+/docs/
+/results_from_desktop/
+/.git/
+/.agents/
+/.matlab_prefs/
 
-# Local-only tools and preferences
-tools/local/
-.matlab_prefs/
-tmp/
+# Local scratch files and helper tools
+/tmp/
+/tools/
+
+# Local coursework
+/code/Lesson_Power_System_Economics/
 
 # OS/editor noise
 .DS_Store

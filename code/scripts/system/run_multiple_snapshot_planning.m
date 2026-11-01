@@ -1,69 +1,71 @@
 %% IEEE-30场景随机多时段GFM-ES配置算例
 % 本脚本负责参数准备、求解流程编排和完成通知。
+Enable_Completion_Notification = false; % 自行配置mailTome后可启用。
 
-Project_Root = resolve_project_root_for_script();
-addpath(genpath(fullfile(Project_Root, 'code', 'functions')));
+%% 1. 生成并加载默认参数文件
 
-%% 1. 准备并加载当前参数文件
-if exist('Parameter_File', 'var') && ~isempty(Parameter_File)
-    % 外部指定参数时直接读取，不覆盖用户提供的JSON文件。
-    Parameter_File = char(Parameter_File);
-    assert(isfile(Parameter_File), '参数文件不存在：%s', Parameter_File);
-else
-    % 未指定参数时，由参数源脚本重新生成默认JSON文件。
-    run(fullfile(Project_Root, 'data', 'params', ...
-        'generate_multiple_snapshot_default_params.m'));
-    Parameter_File = fullfile(Project_Root, 'data', 'params', ...
-        'multiple_snapshot_default_params.json');
-end
-[mpc, CONF, paths] = load_multiple_snapshot_case(Project_Root, Parameter_File);
+% 定义项目根目录，用于定位参数文件。
+Script_Directory = fileparts(mfilename('fullpath'));
+Project_Root = fileparts(fileparts(fileparts(Script_Directory)));
+% 生成最新参数文件。
+run(fullfile(Project_Root, 'data', 'params', ...
+    'generate_multiple_snapshot_default_params.m'));
+% 读取参数文件。
+Parameter_File = fullfile(Project_Root, 'data', 'params', ...
+    'multiple_snapshot_default_params.json');
+[mpc, CONF] = prepare_multiple_snapshot_case(Parameter_File);
+Results_Directory = fullfile(Project_Root, 'results');
 clear Project_Root Parameter_File
 
 %% 2. 执行当前配置的单阶段或两阶段求解
-Case_Name = sprintf('D=%d full typical-day case', ...
-    CONF.Multiple_Snapshot.Time.Typical_Day_Count);
+Case_Name = sprintf('D=%d典型日算例', ...
+    CONF.TypicalDayCount);
 Two_Stage_Enabled = logical(CONF.Solver.Two_Stage.Enabled);
+Solver_Name = CONF.solver.name;
 
 if ~Two_Stage_Enabled
-    fprintf('\n========== %s: single-stage solve ==========\n', Case_Name);
-    [Result, Result_File] = solve_one_stage(mpc, CONF, paths);
-    Total_Time = Result.solve_time;
+    fprintf('\n========== %s：单阶段求解 ==========\n', Case_Name);
+    [Result, Result_File] = solve_one_stage(mpc, CONF, Results_Directory);
+    Total_Time = Result.Diagnostics.walltime;
 else
     % 第一阶段优先搜索高质量可行解。
     CONF_Stage_1 = apply_multiple_snapshot_solver_stage( ...
         CONF, CONF.Solver.Two_Stage.Stage_1);
-    fprintf('\n========== %s: stage 1 feasible search (limit %.0f s) ==========\n', ...
-        Case_Name, CONF_Stage_1.Solver.Time_Limit);
+    fprintf('\n========== %s：第一阶段可行解搜索（时限%.0f秒） ==========\n', ...
+        Case_Name, CONF_Stage_1.solver.options.(Solver_Name).TimeLimit);
     [Result_Stage_1, Result_File_Stage_1] = ...
-        solve_one_stage(mpc, CONF_Stage_1, paths);
+        solve_one_stage(mpc, CONF_Stage_1, Results_Directory);
 
-    if Result_Stage_1.Diagnostics.mip_gap <= CONF.Solver.Two_Stage.Stage_2.MIP_Gap
-        fprintf('%s stage 1 converged; stage 2 is skipped.\n', Case_Name);
+    if Result_Stage_1.Diagnostics.mip_gap <= ...
+            CONF.Solver.Two_Stage.Stage_2.Options.(Solver_Name).MIPGap
+        fprintf('%s第一阶段已达到最终目标间隙，跳过第二阶段。\n', Case_Name);
         Result = Result_Stage_1;
         Result_File = Result_File_Stage_1;
-        Total_Time = Result_Stage_1.solve_time;
+        Total_Time = Result_Stage_1.Diagnostics.walltime;
     else
         % 第二阶段使用第一阶段的当前最优整数解作为热启动。
         CONF_Stage_2 = apply_multiple_snapshot_solver_stage( ...
             CONF, CONF.Solver.Two_Stage.Stage_2);
-        CONF_Stage_2.Solver.MIP_Start = ...
+        CONF_Stage_2.MIPStart = ...
             build_multiple_snapshot_mip_start_from_result(Result_Stage_1, CONF_Stage_2);
-        CONF_Stage_2.Solver.MIP_Start.Source_File = Result_File_Stage_1;
-        fprintf('\n========== %s: stage 2 optimality proof (limit %.0f s) ==========\n', ...
-            Case_Name, CONF_Stage_2.Solver.Time_Limit);
-        fprintf('Stage 1 result is used as the integer MIP start.\n');
-        [Result, Result_File] = solve_one_stage(mpc, CONF_Stage_2, paths);
+        CONF_Stage_2.MIPStart.Source_File = Result_File_Stage_1;
+        fprintf('\n========== %s：第二阶段最优性改进（时限%.0f秒） ==========\n', ...
+            Case_Name, CONF_Stage_2.solver.options.(Solver_Name).TimeLimit);
+        fprintf('使用第一阶段的整数解进行热启动。\n');
+        [Result, Result_File] = solve_one_stage(mpc, CONF_Stage_2, Results_Directory);
 
-        fprintf('\n%s two-stage solve completed.\nStage 1: %s\nStage 2: %s\n', ...
+        fprintf('\n%s两阶段求解完成。\n第一阶段：%s\n第二阶段：%s\n', ...
             Case_Name, Result_File_Stage_1, Result_File);
-        Total_Time = Result_Stage_1.solve_time + Result.solve_time;
+        Total_Time = Result_Stage_1.Diagnostics.walltime + Result.Diagnostics.walltime;
     end
 end
 
 %% 3. 发送完成通知
-Mail_Content = sprintf(['Experiment completed at %s.\n', ...
-    'Total planning workflow time: %.3f s (%.2f min).\n', ...
-    'D=%d final result: %s'], ...
+Mail_Content = sprintf(['算例计算完成时间：%s。\n', ...
+    '规划流程总耗时：%.3f秒（%.2f分钟）。\n', ...
+    'D=%d典型日算例最终结果：%s'], ...
     char(datetime('now')), Total_Time, Total_Time/60, ...
-    CONF.Multiple_Snapshot.Time.Typical_Day_Count, Result_File);
-mailTome('Experiment completed', Mail_Content);
+    CONF.TypicalDayCount, Result_File);
+if Enable_Completion_Notification
+    mailTome('算例计算完成', Mail_Content);
+end
